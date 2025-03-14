@@ -51,7 +51,7 @@ struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format;
-static int              frame_count = 42;
+static int              frame_count = 1;
 struct v4lconvert_data* data;
 static struct v4l2_format actual_fmt, wanted_fmt;
 static int              width = 1920, height = 1080;
@@ -99,9 +99,9 @@ static void process_image(const void *p, int size)
                 // conv_buffer.length = r;  ?? 
             }
 
-            // box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
-            // fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
-            fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
+            box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+            fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
+            // fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
         }
 
         // fflush(stderr);

@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
 
 int box_blur(const unsigned char*src, unsigned char *dest, const int height, const int width){
     const int dimx = 10, dimy = dimx;
 
+#pragma omp parallel for collapse(3)
     for(int ch = 0; ch < 3;++ch){
         for(int i = 0;i < width;++i){
             for(int j = 0;j < height;++j){
