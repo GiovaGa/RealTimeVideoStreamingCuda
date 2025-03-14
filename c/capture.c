@@ -27,6 +27,8 @@
 #include <libv4l2.h>
 #include <libv4lconvert.h>
 
+#include "filter.c"
+
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
 enum io_method {
@@ -44,13 +46,14 @@ static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
 struct buffer          *buffers;
-struct buffer           conv_buffer = {NULL,0};
+struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format;
 static int              frame_count = 1; // 70;
 struct v4lconvert_data* data;
-static struct v4l2_format      actual_fmt, wanted_fmt;
+static struct v4l2_format actual_fmt, wanted_fmt;
+static int              width = 640, height = 480;
 
 static void errno_exit(const char *s)
 {
@@ -76,7 +79,9 @@ static void process_image(const void *p, int size)
                 free(conv_buffer.start);
                 // YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
                 conv_buffer.length = ((size+1)/2)*3;
+                dest_buffer.length = ((size+1)/2)*3;
                 assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
+                assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
             }
 
             // fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
@@ -86,11 +91,16 @@ static void process_image(const void *p, int size)
             const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
                     (unsigned char*)p,size,
                     (unsigned char*)conv_buffer.start,conv_buffer.length);
-            fprintf(stderr,"Return code: %d\n",r);
             if(r == -1){
                 fprintf(stderr,"%s\n",v4lconvert_get_error_message(data));
+                exit(-1);
+            }else{
+                // conv_buffer.length = r;  ?? 
             }
-            fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
+
+            box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+
+            fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
         }
 
         fflush(stderr);
@@ -508,8 +518,8 @@ static void init_device(void)
         wanted_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         actual_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (force_format) {
-                actual_fmt.fmt.pix.width       = wanted_fmt.fmt.pix.width       = 640;
-                actual_fmt.fmt.pix.height      = wanted_fmt.fmt.pix.height      = 480;
+                actual_fmt.fmt.pix.width       = wanted_fmt.fmt.pix.width       = width;
+                actual_fmt.fmt.pix.height      = wanted_fmt.fmt.pix.height      = height;
                 wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
                 wanted_fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
