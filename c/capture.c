@@ -25,6 +25,7 @@
 
 #include <linux/videodev2.h>
 #include <libv4l2.h>
+#include <libv4lconvert.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -43,10 +44,13 @@ static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
 struct buffer          *buffers;
+struct buffer           conv_buffer = {NULL,0};
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format;
-static int              frame_count = 70;
+static int              frame_count = 1; // 70;
+struct v4lconvert_data* data;
+static struct v4l2_format      actual_fmt, wanted_fmt;
 
 static void errno_exit(const char *s)
 {
@@ -68,7 +72,25 @@ static int xioctl(int fh, int request, void *arg)
 static void process_image(const void *p, int size)
 {
         if (out_buf){
-            fwrite(p, size, 1, stdout);
+            if(conv_buffer.length < size*3){
+                free(conv_buffer.start);
+                // YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
+                conv_buffer.length = ((size+1)/2)*3;
+                assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
+            }
+
+            // fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
+
+            xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
+            wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+            const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
+                    (unsigned char*)p,size,
+                    (unsigned char*)conv_buffer.start,conv_buffer.length);
+            fprintf(stderr,"Return code: %d\n",r);
+            if(r == -1){
+                fprintf(stderr,"%s\n",v4lconvert_get_error_message(data));
+            }
+            fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
         }
 
         fflush(stderr);
@@ -223,6 +245,7 @@ static void stop_capturing(void)
                         errno_exit("VIDIOC_STREAMOFF");
                 break;
         }
+        v4lconvert_destroy(data);
 }
 
 static void start_capturing(void)
@@ -271,6 +294,7 @@ static void start_capturing(void)
                         errno_exit("VIDIOC_STREAMON");
                 break;
         }
+        data = v4lconvert_create(fd);
 }
 
 static void uninit_device(void)
@@ -284,7 +308,7 @@ static void uninit_device(void)
 
         case IO_METHOD_MMAP:
                 for (i = 0; i < n_buffers; ++i)
-                        if (-1 == munmap(buffers[i].start, buffers[i].length))
+                        if (-1 == v4l2_munmap(buffers[i].start, buffers[i].length))
                                 errno_exit("munmap");
                 break;
 
@@ -293,7 +317,7 @@ static void uninit_device(void)
                         free(buffers[i].start);
                 break;
         }
-
+        free(conv_buffer.start);
         free(buffers);
 }
 
@@ -362,7 +386,7 @@ static void init_mmap(void)
 
                 buffers[n_buffers].length = buf.length;
                 buffers[n_buffers].start =
-                        mmap(NULL /* start anywhere */,
+                        v4l2_mmap(NULL /* start anywhere */,
                               buf.length,
                               PROT_READ | PROT_WRITE /* required */,
                               MAP_SHARED /* recommended */,
@@ -416,8 +440,6 @@ static void init_device(void)
         struct v4l2_capability cap;
         struct v4l2_cropcap cropcap;
         struct v4l2_crop crop;
-        struct v4l2_format fmt;
-        unsigned int min;
 
         if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &cap)) {
                 if (EINVAL == errno) {
@@ -481,36 +503,45 @@ static void init_device(void)
         }
 
 
-        CLEAR(fmt);
+        CLEAR(wanted_fmt);
 
-        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        wanted_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        actual_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (force_format) {
-                fmt.fmt.pix.width       = 640;
-                fmt.fmt.pix.height      = 480;
-                fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-                fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
+                actual_fmt.fmt.pix.width       = wanted_fmt.fmt.pix.width       = 640;
+                actual_fmt.fmt.pix.height      = wanted_fmt.fmt.pix.height      = 480;
+                wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+                wanted_fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
-                if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
-                        errno_exit("VIDIOC_S_FMT");
+                if (-1 == xioctl(fd, VIDIOC_S_FMT, &actual_fmt))
+                    errno_exit("VIDIOC_S_FMT");
+                if (actual_fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_RGB24) {
+                    // fprintf(stderr,"Libv4l didn't accept RGB24 format.\n");
+                }
 
                 /* Note VIDIOC_S_FMT may change width and height. */
         } else {
                 /* Preserve original settings as set by v4l2-ctl for example */
-                if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
-                        errno_exit("VIDIOC_G_FMT");
+                wanted_fmt = actual_fmt;
         }
+        if (-1 == xioctl(fd, VIDIOC_G_FMT, &actual_fmt))
+            errno_exit("VIDIOC_G_FMT");
 
         /* Buggy driver paranoia. */
-        min = fmt.fmt.pix.width * 2;
-        if (fmt.fmt.pix.bytesperline < min)
-                fmt.fmt.pix.bytesperline = min;
-        min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
-        if (fmt.fmt.pix.sizeimage < min)
-                fmt.fmt.pix.sizeimage = min;
+        /*
+        unsigned int min = wanted_fmt.fmt.pix.width * 2;
+        if (actual_fmt.fmt.pix.bytesperline < min){
+                actual_fmt.fmt.pix.bytesperline = wanted_fmt.fmt.pix.bytesperline = min;
+        }
+        min = actual_fmt.fmt.pix.bytesperline * actual_fmt.fmt.pix.height;
+        if (actual_fmt.fmt.pix.sizeimage < min){
+                actual_fmt.fmt.pix.bytesperline = wanted_fmt.fmt.pix.bytesperline = min;
+        }
+        */
 
         switch (io) {
         case IO_METHOD_READ:
-                init_read(fmt.fmt.pix.sizeimage);
+                init_read(actual_fmt.fmt.pix.sizeimage);
                 break;
 
         case IO_METHOD_MMAP:
@@ -518,14 +549,14 @@ static void init_device(void)
                 break;
 
         case IO_METHOD_USERPTR:
-                init_userp(fmt.fmt.pix.sizeimage);
+                init_userp(actual_fmt.fmt.pix.sizeimage);
                 break;
         }
 }
 
 static void close_device(void)
 {
-        if (-1 == close(fd))
+        if (-1 == v4l2_close(fd))
                 errno_exit("close");
 
         fd = -1;
@@ -546,7 +577,7 @@ static void open_device(void)
                 exit(EXIT_FAILURE);
         }
 
-        fd = open(dev_name, O_RDWR /* required */ | O_NONBLOCK, 0);
+        fd = v4l2_open(dev_name, O_RDWR /* required */ | O_NONBLOCK, 0);
 
         if (-1 == fd) {
                 fprintf(stderr, "Cannot open '%s': %d, %s\n",
@@ -593,7 +624,7 @@ int main(int argc, char **argv)
         dev_name = "/dev/video0";
 
         for (;;) {
-                int idx = 0;
+                int idx;
                 int c;
 
                 c = getopt_long(argc, argv,
