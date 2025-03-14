@@ -489,7 +489,10 @@ static void init_device(void)
                 fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
 
                 if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
-                        errno_exit("VIDIOC_S_FMT");
+                    errno_exit("VIDIOC_S_FMT");
+                if (fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_RGB24) {
+                    fprintf(stderr,"Libv4l didn't accept RGB24 format.\n");
+                }
 
                 /* Note VIDIOC_S_FMT may change width and height. */
         } else {
