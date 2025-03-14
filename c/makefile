@@ -1,6 +1,6 @@
 CC 			:= gcc
 CLIBS   	:= -lv4l2 -lv4lconvert
-CFLAGS		:= -fsanitize=address -fsanitize=undefined -g -O0 -Wall $(CLIBS)
+CFLAGS		:= -fsanitize=address -fsanitize=undefined -g -O0 -Wall -fopenmp $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
@@ -23,7 +23,7 @@ makedir:
 debug: $(TARGET)
 
 release: clean
-release: CFLAGS :=-O2 -Wall $(CLIBS)
+release: CFLAGS :=-O2 -Wall -fopenmp $(CLIBS)
 release: CCOBJFLAGS	:= $(CFLAGS) -c
 release: $(TARGET)
 
