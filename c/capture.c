@@ -8,6 +8,7 @@
  */
 
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -50,10 +51,10 @@ struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format;
-static int              frame_count = 1; // 70;
+static int              frame_count = 42;
 struct v4lconvert_data* data;
 static struct v4l2_format actual_fmt, wanted_fmt;
-static int              width = 640, height = 480;
+static int              width = 1920, height = 1080;
 
 static void errno_exit(const char *s)
 {
@@ -98,12 +99,12 @@ static void process_image(const void *p, int size)
                 // conv_buffer.length = r;  ?? 
             }
 
-            box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
-
-            fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
+            // box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+            // fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
+            fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
         }
 
-        fflush(stderr);
+        // fflush(stderr);
         fprintf(stderr, ".");
         fflush(stdout);
 }
@@ -205,8 +206,9 @@ static void mainloop(void)
         unsigned int count;
 
         count = frame_count;
-
+        int t0, t1;
         while (count-- > 0) {
+                t0 = clock();
                 for (;;) {
                         fd_set fds;
                         struct timeval tv;
@@ -231,11 +233,12 @@ static void mainloop(void)
                                 fprintf(stderr, "select timeout\n");
                                 exit(EXIT_FAILURE);
                         }
-
                         if (read_frame())
                                 break;
                         /* EAGAIN - continue select loop. */
                 }
+                t1 = clock();
+                fprintf(stderr,"Frametime %.3f ms -> %.2f\n",((float)t1-t0)*1000/CLOCKS_PER_SEC, CLOCKS_PER_SEC/((float)t1-t0));
         }
 }
 
