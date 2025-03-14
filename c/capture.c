@@ -24,6 +24,7 @@
 #include <sys/ioctl.h>
 
 #include <linux/videodev2.h>
+#include <libv4l2.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -66,8 +67,9 @@ static int xioctl(int fh, int request, void *arg)
 
 static void process_image(const void *p, int size)
 {
-        if (out_buf)
-                fwrite(p, size, 1, stdout);
+        if (out_buf){
+            fwrite(p, size, 1, stdout);
+        }
 
         fflush(stderr);
         fprintf(stderr, ".");
