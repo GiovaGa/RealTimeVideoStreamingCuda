@@ -23,7 +23,8 @@ makedir:
 debug: $(TARGET)
 
 release: clean
-release: CFLAGS :=-O2 -Wall -fopenmp $(CLIBS)
+# release: CFLAGS := -DNDEBUG -O2 -g -Wall -fopenmp $(CLIBS)
+release: CFLAGS := -O2 -g -Wall -fopenmp $(CLIBS)
 release: CCOBJFLAGS	:= $(CFLAGS) -c
 release: $(TARGET)
 
@@ -48,6 +49,5 @@ CLEAN_LIST := $(TARGET) \
 			  $(DISTCLEAN_LIST)
 
 clean:
-	@echo CLEAN $(CLEAN_LIST)
-	@rm -f $(CLEAN_LIST)
+	rm -f $(CLEAN_LIST)
 
