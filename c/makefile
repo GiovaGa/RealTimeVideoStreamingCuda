@@ -1,17 +1,53 @@
-CC=gcc
-CLIBS=-lv4l2 -lv4lconvert
-CFLAGS=-O0 -fsanitize=address -fsanitize=undefined -g -Wall
+CC 			:= gcc
+CLIBS   	:= -lv4l2 -lv4lconvert
+CFLAGS		:= -fsanitize=address -fsanitize=undefined -g -O0 -Wall $(CLIBS)
+CCOBJFLAGS 	:= $(CFLAGS) -c
+DBGFLAGS 	:= -g
 
-all: capture main
+SRC_PATH= .
+OBJ_PATH= obj
+BIN_PATH= bin
+DBG_PATH := debug
+TARGET 	= $(BIN_PATH)/capture
 
-capture: filter
-	$(CC) $(CFLAGS) $(CLIBS) -o capture.o capture.c
 
-filter:
-	$(CC) $(CFLAGS) -o filter.o -c filter.c
+SRC := $(foreach x, $(SRC_PATH), $(wildcard $(addprefix $(x)/*,.c*)))
+OBJ := $(addprefix $(OBJ_PATH)/, $(addsuffix .o, $(notdir $(basename $(SRC)))))
+OBJ_DEBUG := $(addprefix $(DBG_PATH)/, $(addsuffix .o, $(notdir $(basename $(SRC)))))
 
-main:
-	$(CC) $(CFLAGS) $(CLIBS) -o main.o main.c
+default: makedir debug
+all: $(TARGET)
+makedir:
+	@mkdir -p $(BIN_PATH) $(OBJ_PATH) $(DBG_PATH)
+
+debug: $(TARGET)
+
+release: clean
+release: CFLAGS :=-O2 -Wall $(CLIBS)
+release: CCOBJFLAGS	:= $(CFLAGS) -c
+release: $(TARGET)
+
+
+$(TARGET): $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ)
+
+$(OBJ_PATH)/%.o: $(SRC_PATH)/%.c*
+	$(CC) $(CCOBJFLAGS) -o $@ $<
+
+$(DBG_PATH)/%.o: $(SRC_PATH)/%.c*
+	$(CC) $(CCOBJFLAGS) $(DBGFLAGS) -o $@ $<
+
+$(TARGET_DEBUG): $(OBJ_DEBUG)
+	$(CC) $(CFLAGS) $(DBGFLAGS) $(OBJ_DEBUG) -o $@
+
+# clean files list
+DISTCLEAN_LIST := $(OBJ) \
+                  $(OBJ_DEBUG)
+CLEAN_LIST := $(TARGET) \
+			  $(TARGET_DEBUG) \
+			  $(DISTCLEAN_LIST)
 
 clean:
-	rm *.o
+	@echo CLEAN $(CLEAN_LIST)
+	@rm -f $(CLEAN_LIST)
+

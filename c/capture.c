@@ -27,7 +27,7 @@
 #include <libv4l2.h>
 #include <libv4lconvert.h>
 
-#include "filter.c"
+#include "filter.h"
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
