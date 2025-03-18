@@ -7,9 +7,6 @@
 #include <time.h>
 
 #include <getopt.h>             /* getopt_long() */
-#include <sys/ioctl.h>
-
-#include <libv4lconvert.h>
 
 #include "capture.h"
 #include "utils.h"
@@ -22,13 +19,75 @@ static int              fd = -1;
 static FILE*            fout = NULL;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
-static int              frame_count = 50;
+static int              frame_count = 10;
 static int              width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static struct v4l2_format actual_fmt, wanted_fmt;
 
+#ifdef __NVCC__
+#include <nppdefs.h>
+
+static void process_image(const void *p, int size)
+{
+	if(d_p.length < size){
+		d_p.length = size;
+		cudaError_t cerr = cudaMalloc(&d_p.start, size);
+		assert(cerr == cudaSuccess);
+	}
+	if(conv_buffer.length < ((size+1)/2)*3){
+		cudaFree(conv_buffer.start);
+		cudaFree(dest_buffer.start);
+		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
+		conv_buffer.length = dest_buffer.length = ((size+1)/2)*3;
+		cudaError_t cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
+		assert(cerr == cudaSuccess);
+		cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
+		assert(cerr == cudaSuccess);
+	}
+	cudaMemcpy(d_p.start,p,size,cudaMemcpyHostToDevice);
+
+	// fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
+
+	xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
+	assert(actual_fmt.fmt.pix.width == width);
+	assert(actual_fmt.fmt.pix.height == height);
+
+	const NppiSize nppSize = {.width = width, .height = height};
+	const int r = nppiYUV422ToRGB_8u_C2C3R(
+	    d_p.start,width*2,
+	    conv_buffer.start,width*3, nppSize);
+	
+	cudaMemcpy(dest_buffer.start, conv_buffer.start, dest_buffer.length, cudaMemcpyDeviceToDevice);
+	// box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+
+	void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
+	assert(pout != MAP_FAILED);
+	cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
+	munmap(pout,dest_buffer.length);
+}
+
+void init_memory(){
+	cudaError_t cerr;
+	d_p.length = width*height*2;
+	cerr = cudaMalloc(&d_p.start, d_p.length);
+	assert(cerr == cudaSuccess);
+	conv_buffer.length = dest_buffer.length = (width*height)*3;
+	cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
+	assert(cerr == cudaSuccess);
+	cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
+	assert(cerr == cudaSuccess);
+	if(!out_std){
+		fout = open("out.raw", O_RDWR | O_CREAT);
+		assert(fout != -1);
+	}
+}
+#else
+#ifndef __GNUC__
+#warning "Unsupported compiler"
+#endif
+#include <libv4lconvert.h>
 
 static void process_image(const void *p, int size)
 {
@@ -71,6 +130,7 @@ static void process_image(const void *p, int size)
     // fflush(stderr);
     // fprintf(stderr, ".");
 }
+#endif
 
 static int read_frame(const int fd)
 {
@@ -253,7 +313,7 @@ int main(int argc, char **argv)
     v4lconvert_destroy(data);
     stop_capturing(fd);
     uninit_libav();
-    uninit_device();
+    uninit_device(buffers);
     close_device(fd); fd = -1;
 
     free(conv_buffer.start);

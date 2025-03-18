@@ -15,6 +15,6 @@ void stop_capturing(const int);
 int open_device(const char*);
 void close_device(const int);
 void*init_device(const int fd, const int,struct v4l2_format *, struct v4l2_format *);
-void uninit_device();
+void uninit_device(buffer *buffers);
 
 #endif

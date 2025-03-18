@@ -3,10 +3,10 @@
 #include <assert.h>
 #include <omp.h>
 
-int min(const int a,const int b){
+static int min(const int a,const int b){
     return ((a<b)?a:b);
 }
-int max(const int a,const int b){
+static int max(const int a,const int b){
     return ((a<b)?b:a);
 }
 

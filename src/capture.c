@@ -12,7 +12,6 @@
 #include <string.h>
 #include <assert.h>
 
-
 #include <fcntl.h>              /* low-level i/o */
 #include <unistd.h>
 #include <errno.h>
@@ -20,7 +19,6 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/mman.h>
-#include <sys/ioctl.h>
 
 #include <linux/videodev2.h>
 #include <libv4l2.h>
@@ -28,9 +26,7 @@
 #include "utils.h"
 #include "capture.h"
 
-static buffer          *buffers;
-unsigned int     n_buffers;
-static struct v4l2_format actual_fmt, wanted_fmt;
+static unsigned int n_buffers = 0;
 
 void stop_capturing(const int fd)
 {
@@ -62,7 +58,7 @@ void start_capturing(const int fd)
                 errno_exit("VIDIOC_STREAMON");
 }
 
-void uninit_device(void)
+void uninit_device(buffer *buffers)
 {
         unsigned int i;
 
@@ -97,7 +93,7 @@ void* init_mmap(const int fd)
                 exit(EXIT_FAILURE);
         }
 
-        buffers = calloc(req.count, sizeof(*buffers));
+        buffer* buffers = calloc(req.count, sizeof(*buffers));
 
         if (!buffers) {
                 fprintf(stderr, "Out of memory\n");

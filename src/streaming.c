@@ -1,14 +1,3 @@
-#include <libavcodec/avcodec.h>
-#include <libavutil/imgutils.h>
-#include <libavutil/frame.h>
-#include <libavutil/mem.h>
-#include <libavutil/opt.h>
-#include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <time.h>
 #include <assert.h>
 #include <stdio.h>
 #include <errno.h>
@@ -16,6 +5,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+
+// networking
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+// libav*
+#include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/frame.h>
+#include <libavutil/mem.h>
+#include <libavutil/opt.h>
+#include <libavformat/avformat.h>
+#include <libswscale/swscale.h>
 
 #define PORT 8080
 
