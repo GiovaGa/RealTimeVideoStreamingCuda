@@ -29,6 +29,7 @@
 #include <libv4lconvert.h>
 
 #include "filter.h"
+#include <nppdefs.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -45,14 +46,15 @@ struct buffer {
 
 static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
-static int              fd = -1;
-static FILE*		fout = NULL;
+static int              fd = -1, fout = -1;
 struct buffer          *buffers;
-struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
+struct buffer           conv_buffer = {NULL,0},
+			dest_buffer = {NULL,0},
+			d_p = {NULL,0}; // copy of p on device
 static unsigned int     n_buffers;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
-static int              frame_count = 1;
+static int              frame_count = 5;
 struct v4lconvert_data* data;
 static struct v4l2_format actual_fmt, wanted_fmt;
 static int              width = 1920, height = 1080;
@@ -76,41 +78,57 @@ static int xioctl(int fh, int request, void *arg)
 
 static void process_image(const void *p, int size)
 {
-	if(conv_buffer.length < size*3){
-		free(conv_buffer.start);
-		free(dest_buffer.start);
-		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
-		conv_buffer.length = ((size+1)/2)*3;
-		dest_buffer.length = ((size+1)/2)*3;
-		assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
-		assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
+	if(d_p.length < size){
+		d_p.length = size;
+		cudaError_t cerr = cudaMalloc(&d_p.start, size);
+		assert(cerr == cudaSuccess);
 	}
+	if(conv_buffer.length < ((size+1)/2)*3){
+		cudaFree(conv_buffer.start);
+		cudaFree(dest_buffer.start);
+		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
+		conv_buffer.length = dest_buffer.length = ((size+1)/2)*3;
+		cudaError_t cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
+		assert(cerr == cudaSuccess);
+		cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
+		assert(cerr == cudaSuccess);
+	}
+	cudaMemcpy(d_p.start,p,size,cudaMemcpyHostToDevice);
 
-	fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
+	// fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
 
 	xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
-	wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
-	const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
-	    (unsigned char*)p,size,
-	    (unsigned char*)conv_buffer.start,conv_buffer.length);
-	if(r == -1){
-		fprintf(stderr,"%s\n",v4lconvert_get_error_message(data));
-		exit(-1);
-	}else{
-		// conv_buffer.length = r;  ?? 
-	}
+	assert(actual_fmt.fmt.pix.width == width);
+	assert(actual_fmt.fmt.pix.height == height);
 
-	box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
-	if (out_std){
-		fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
-		fflush(stdout);
-	}else{
-		fwrite(conv_buffer.start, conv_buffer.length, 1, fout);
-		fflush(fout);
-	}
+	const NppiSize nppSize = {.width = width, .height = height};
+	const int r = nppiYUV422ToRGB_8u_C2C3R(
+	    d_p.start,width*2,
+	    conv_buffer.start,width*3, nppSize);
+	
+	cudaMemcpy(dest_buffer.start, conv_buffer.start, dest_buffer.length, cudaMemcpyDeviceToDevice);
+	// box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
 
-	// fflush(stderr);
-	// fprintf(stderr, ".");
+	void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
+	assert(pout != MAP_FAILED);
+	cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
+	munmap(pout,dest_buffer.length);
+}
+
+void init_memory(){
+	cudaError_t cerr;
+	d_p.length = width*height*2;
+	cerr = cudaMalloc(&d_p.start, d_p.length);
+	assert(cerr == cudaSuccess);
+	conv_buffer.length = dest_buffer.length = (width*height)*3;
+	cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
+	assert(cerr == cudaSuccess);
+	cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
+	assert(cerr == cudaSuccess);
+	if(!out_std){
+		fout = open("out.raw", O_RDWR | O_CREAT);
+		assert(fout != -1);
+	}
 }
 
 static int read_frame(void)
@@ -334,7 +352,9 @@ static void uninit_device(void)
                         free(buffers[i].start);
                 break;
         }
-        free(conv_buffer.start);
+        cudaFree(conv_buffer.start);
+        cudaFree(dest_buffer.start);
+        cudaFree(d_p.start);
         free(buffers);
 }
 
@@ -369,7 +389,7 @@ static void init_mmap(void)
         if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
                 if (EINVAL == errno) {
                         fprintf(stderr, "%s does not support "
-                                 "memory mappingn", dev_name);
+                                 "memory mapping\n", dev_name);
                         exit(EXIT_FAILURE);
                 } else {
                         errno_exit("VIDIOC_REQBUFS");
@@ -545,7 +565,6 @@ static void init_device(void)
             errno_exit("VIDIOC_G_FMT");
 
         /* Buggy driver paranoia. */
-        /*
         unsigned int min = wanted_fmt.fmt.pix.width * 2;
         if (actual_fmt.fmt.pix.bytesperline < min){
                 actual_fmt.fmt.pix.bytesperline = wanted_fmt.fmt.pix.bytesperline = min;
@@ -554,7 +573,7 @@ static void init_device(void)
         if (actual_fmt.fmt.pix.sizeimage < min){
                 actual_fmt.fmt.pix.bytesperline = wanted_fmt.fmt.pix.bytesperline = min;
         }
-        */
+        
 
         switch (io) {
         case IO_METHOD_READ:
@@ -695,12 +714,7 @@ int main(int argc, char **argv)
                 }
         }
 
-	if(!out_std){
-		fout = fopen("out.raw","w");
-		if(fout == NULL){
-			errno_exit("fout");
-		}
-	}
+	init_memory();
 
 
         open_device();
@@ -712,7 +726,7 @@ int main(int argc, char **argv)
         close_device();
 
 	if(!out_std)
-		fclose(fout);
+		close(fout);
 
         fprintf(stderr, "\n");
         return 0;

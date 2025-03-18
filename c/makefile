@@ -1,6 +1,6 @@
-CC 			:= gcc
+CC 		:= nvcc
 CLIBS   	:= -lv4l2 -lv4lconvert
-CFLAGS		:= -fsanitize=address -fsanitize=undefined -g -O0 -Wall -fopenmp $(CLIBS)
+CFLAGS		:= -g -O0 $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
@@ -23,8 +23,8 @@ makedir:
 debug: $(TARGET)
 
 release: clean
-# release: CFLAGS := -DNDEBUG -O2 -g -Wall -fopenmp $(CLIBS)
-release: CFLAGS := -O2 -g -Wall -fopenmp $(CLIBS)
+# release: CFLAGS := -DNDEBUG -O2 -g $(CLIBS)
+release: CFLAGS := -O2 -g $(CLIBS)
 release: CCOBJFLAGS	:= $(CFLAGS) -c
 release: $(TARGET)
 
