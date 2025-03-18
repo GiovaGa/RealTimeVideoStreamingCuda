@@ -46,11 +46,12 @@ struct buffer {
 static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
+static FILE*		fout = NULL;
 struct buffer          *buffers;
 struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static unsigned int     n_buffers;
-static int              out_buf;
-static int              force_format;
+static int              out_std = 0; // output images to stdout, 0 to file
+static int              force_format = 1;
 static int              frame_count = 1;
 struct v4lconvert_data* data;
 static struct v4l2_format actual_fmt, wanted_fmt;
@@ -75,38 +76,41 @@ static int xioctl(int fh, int request, void *arg)
 
 static void process_image(const void *p, int size)
 {
-        if (out_buf){
-            if(conv_buffer.length < size*3){
-                free(conv_buffer.start);
-                // YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
-                conv_buffer.length = ((size+1)/2)*3;
-                dest_buffer.length = ((size+1)/2)*3;
-                assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
-                assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
-            }
+	if(conv_buffer.length < size*3){
+		free(conv_buffer.start);
+		free(dest_buffer.start);
+		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
+		conv_buffer.length = ((size+1)/2)*3;
+		dest_buffer.length = ((size+1)/2)*3;
+		assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
+		assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
+	}
 
-            // fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
+	fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
 
-            xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
-            wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
-            const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
-                    (unsigned char*)p,size,
-                    (unsigned char*)conv_buffer.start,conv_buffer.length);
-            if(r == -1){
-                fprintf(stderr,"%s\n",v4lconvert_get_error_message(data));
-                exit(-1);
-            }else{
-                // conv_buffer.length = r;  ?? 
-            }
+	xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
+	wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+	const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
+	    (unsigned char*)p,size,
+	    (unsigned char*)conv_buffer.start,conv_buffer.length);
+	if(r == -1){
+		fprintf(stderr,"%s\n",v4lconvert_get_error_message(data));
+		exit(-1);
+	}else{
+		// conv_buffer.length = r;  ?? 
+	}
 
-            box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
-            fwrite(dest_buffer.start, dest_buffer.length, 1, stdout);
-            // fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
-        }
+	box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+	if (out_std){
+		fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
+		fflush(stdout);
+	}else{
+		fwrite(conv_buffer.start, conv_buffer.length, 1, fout);
+		fflush(fout);
+	}
 
-        // fflush(stderr);
-        fprintf(stderr, ".");
-        fflush(stdout);
+	// fflush(stderr);
+	// fprintf(stderr, ".");
 }
 
 static int read_frame(void)
@@ -671,11 +675,11 @@ int main(int argc, char **argv)
                         break;
 
                 case 'o':
-                        out_buf++;
+                        out_std=1;
                         break;
 
                 case 'f':
-                        force_format++;
+                        force_format--;
                         break;
 
                 case 'c':
@@ -691,6 +695,14 @@ int main(int argc, char **argv)
                 }
         }
 
+	if(!out_std){
+		fout = fopen("out.raw","w");
+		if(fout == NULL){
+			errno_exit("fout");
+		}
+	}
+
+
         open_device();
         init_device();
         start_capturing();
@@ -698,6 +710,10 @@ int main(int argc, char **argv)
         stop_capturing();
         uninit_device();
         close_device();
+
+	if(!out_std)
+		fclose(fout);
+
         fprintf(stderr, "\n");
         return 0;
 }
