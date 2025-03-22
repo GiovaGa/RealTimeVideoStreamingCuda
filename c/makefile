@@ -1,6 +1,6 @@
 CC 			:= gcc
-CLIBS   	:= -lv4l2 -lv4lconvert
-CFLAGS		:= -fsanitize=address -fsanitize=undefined -g -O0 -Wall -fopenmp $(CLIBS)
+CLIBS   	:= -lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lavfilter -lavdevice -lswresample -lswscale
+CFLAGS		:= -g -O0 $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
