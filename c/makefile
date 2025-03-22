@@ -1,6 +1,6 @@
 CC 			:= gcc
 CLIBS   	:= -lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lavfilter -lavdevice -lswresample -lswscale
-CFLAGS		:= -g -O0 $(CLIBS)
+CFLAGS		:= -g -O0 -fsanitize=address -fsanitize=undefined $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
