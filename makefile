@@ -4,11 +4,11 @@ CFLAGS		:= -g -O0 -fsanitize=address -fsanitize=undefined $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
-SRC_PATH= .
+SRC_PATH= src
 OBJ_PATH= obj
 BIN_PATH= bin
 DBG_PATH := debug
-TARGET 	= $(BIN_PATH)/capture
+TARGET 	= $(BIN_PATH)/main
 
 
 SRC := $(foreach x, $(SRC_PATH), $(wildcard $(addprefix $(x)/*,.c*)))

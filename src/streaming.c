@@ -75,7 +75,8 @@ void init_libav(const int width, const int height, const int count)
     // codec = avcodec_find_encoder_by_name(codec_name);
 
     if (!codec) {
-        fprintf(stderr, "Codec '%s' not found\n", codec_name);
+        fprintf(stderr, "Error setting up codec\n");
+        // fprintf(stderr, "Codec '%s' not found\n", codec_name);
         exit(1);
     }
 
