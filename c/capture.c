@@ -100,6 +100,10 @@ static void process_image(const void *p, int size)
     }
 
     box_blur((uint8_t *)conv_buffer.start, (uint8_t *) dest_buffer.start, width, height);
+
+    send_frame(dest_buffer.start, width, height);
+    // send_frame(dest_buffer.start, width, height);
+
     if (out_std){
         fwrite(conv_buffer.start, conv_buffer.length, 1, stdout);
         fflush(stdout);
@@ -245,6 +249,7 @@ static void init_read(unsigned int buffer_size)
                 fprintf(stderr, "Out of memory\n");
                 exit(EXIT_FAILURE);
         }
+
 }
 
 static void init_mmap(void)
@@ -559,9 +564,11 @@ int main(int argc, char **argv)
 
         open_device();
         init_device();
+        init_libav(width,height,32); // 32 is buffer size
         start_capturing();
         mainloop();
         stop_capturing();
+        uninit_libav(width,height,32);
         uninit_device();
         close_device();
 
