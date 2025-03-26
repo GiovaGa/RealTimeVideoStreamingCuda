@@ -5,6 +5,7 @@
 #include <libavutil/opt.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
+#include <time.h>
 #include <assert.h>
 #include <stdio.h>
 #include <errno.h>
@@ -15,9 +16,12 @@
 
 static AVCodec *codec = NULL;
 static AVCodecContext *encoder = NULL;
-static AVFrame *frame = NULL;
+static AVFormatContext *muxer = NULL;
+static AVStream *video_track = NULL;
+static AVFrame *frame = NULL, *yuv_frame = NULL;
 static AVPacket *encoded_packet = NULL, *encoded_frame = NULL;
-static int pts = 0;
+struct SwsContext *sws_ctx = NULL;
+static int64_t pts = 0;
 
 void init_libav(const int width, const int height, const int count)
 {
@@ -26,7 +30,7 @@ void init_libav(const int width, const int height, const int count)
 
     frame = av_frame_alloc();
     if(!frame){         fprintf(stderr, "Could not allocate video frame\n"); exit(1); }
-    frame->format = AV_PIX_FMT_YUV422P;
+    frame->format = AV_PIX_FMT_RGB24;
     frame->width  = width; 
     frame->height = height;
 
@@ -38,16 +42,34 @@ void init_libav(const int width, const int height, const int count)
     ret = av_frame_make_writable(frame);
     if (ret < 0) exit(1);
 
-    encoded_frame = av_packet_alloc();
+    sws_ctx = sws_getContext(width, height, AV_PIX_FMT_RGB24, width, height, AV_PIX_FMT_YUV420P, 0, NULL, NULL, NULL);
+    yuv_frame = av_frame_alloc();
+    const int yuv_size = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 1);
+    yuv_frame->format = AV_PIX_FMT_YUV420P;
+    yuv_frame->width  = width; 
+    yuv_frame->height = height;
+    ret = av_frame_get_buffer(yuv_frame, 16);
+    assert(ret == 0);
 
-    codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+
+    encoded_frame = av_packet_alloc();
+    assert(encoded_frame);
+
+    codec = avcodec_find_encoder(AV_CODEC_ID_H264); // TODO: change to use yuv422 pixel format as input
+    // const char *codec_name = "tiff"; 
+    // codec = avcodec_find_encoder_by_name(codec_name);
+    if (!codec) {
+        // fprintf(stderr, "Codec '%s' not found\n", codec_name);
+        exit(1);
+    }
 
     encoder = avcodec_alloc_context3(codec);
     assert(encoder);
-    encoder->bit_rate = 10 * 1000 * 10000;
+    encoder->bit_rate = 10 * 1024 * 1024;
     encoder->width = width;
     encoder->height = height;
     encoder->time_base = (AVRational) {1,30};
+    encoder->framerate = (AVRational){15, 1};
     encoder->gop_size = 15;
     encoder->max_b_frames = 1;
     encoder->pix_fmt = AV_PIX_FMT_YUV420P;
@@ -56,11 +78,12 @@ void init_libav(const int width, const int height, const int count)
     assert(ret == 0);
 
     // set up muxer
-    AVFormatContext* muxer = avformat_alloc_context();
+    muxer = avformat_alloc_context();
     // avformat_alloc_output_context2(&muxer, NULL, "flv", RTMP_URL)
     muxer->oformat = av_guess_format("matroska", "test.mkv", NULL);
+    return;
 
-    AVStream* video_track = avformat_new_stream(muxer, NULL);
+    video_track = avformat_new_stream(muxer, NULL);
     // muxer->oformat->video_codec = AV_CODEC_ID_H264;
     // AVStream* audio_track = avformat_new_stream(muxer, NULL);
     // muxer->oformat->audio_codec = AV_CODEC_ID_OPUS;
@@ -76,9 +99,17 @@ void init_libav(const int width, const int height, const int count)
 
 void uninit_libav()
 {
+    avformat_free_context(muxer);
+    // avio_format_context_unref(video_track);
     // av_packet_free(&encoded_packet); 
     av_packet_unref(encoded_frame); 
     if(encoded_packet != NULL) av_packet_unref(encoded_packet); 
+
+
+    avcodec_free_context(&encoder);
+    sws_freeContext(sws_ctx);
+    // av_frame_free(&yuv_frame);
+    av_frame_unref(yuv_frame);
     // av_frame_free(&frame);
     av_frame_unref(frame);
 }
@@ -92,58 +123,42 @@ int send_frame(void *data, const int source_width, const int source_height)
     int ret = av_frame_make_writable(frame);
     if (ret < 0) exit(1);
 
-    memcpy(frame->data[pts],data,source_width*source_height*2);
-    // frame->pts = pts++;
+    memcpy(frame->data[0],data,source_width*source_height*3);
+    frame->pts = ++pts;
     // fprintf(stderr,"%d \t%d\t%d\t%d\n", data, frame->data[0]);
-
-    // for(int y = 0;y < frame->height;++y){
-        // for(int x = 0;x < frame->width;++x){
-            // for(int ch = 0;ch < 3;++ch)
-                // frame->data[0][(y*frame->linesize[ch]) + 3*x+ch] = ((uint8_t*)data)[3*(y*source_width + x) + ch];
-            // }
-        // }
+    
     // Convert the frame from RGB to YUV420p
-    struct SwsContext *sws_ctx = sws_getContext(source_width, source_height, AV_PIX_FMT_RGB24, source_width, source_height, AV_PIX_FMT_YUV420P, 0, NULL, NULL, NULL);
-    AVFrame *yuv_frame = av_frame_alloc();
-    const int yuv_size = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, source_width, source_height, 1);
-    uint8_t *yuv_data = (uint8_t *)av_malloc(yuv_size);
-    av_image_fill_arrays(yuv_frame->data, yuv_frame->linesize, yuv_data, AV_PIX_FMT_YUV420P, source_width, source_height, 1);
+    ret = av_frame_make_writable(yuv_frame);
+    if (ret < 0) exit(1);
 
     // fprintf(stderr,"%d\n",frame->linesize);
     // Convert the RGB frame to YUV420p
     sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, source_height, yuv_frame->data, yuv_frame->linesize);
-    assert(ret == 0);
 
+    // fprintf(stderr,"!%d || !%d\n",avcodec_is_open(encoder), av_codec_is_encoder(encoder->codec));
+    // assert(!(!avcodec_is_open(encoder) || !av_codec_is_encoder(encoder->codec)));
+
+    encoded_frame->pts = ++pts;
     ret = avcodec_send_frame(encoder, yuv_frame);
-    fprintf(stderr,"%s\n",av_err2str(ret));
     assert(ret == 0);
     ret = avcodec_receive_packet(encoder, encoded_frame);
-    fprintf(stderr,"Ok: line %d\n",__LINE__);
     if(ret == 0) {
         fprintf(stderr,"Encoding went well!\n");
-    }else{
+        FILE *outfile = fopen("out","wb");
+        fwrite(encoded_frame->data, 1, encoded_frame->size, outfile);
+        fclose(outfile);
+    }if(ret != EAGAIN){
         fprintf(stderr,"Encoding didn't go well!\n");
-        fprintf(stderr,"%s\n",av_err2str(ret));
+        fprintf(stderr,"%d: %s\n",ret, av_err2str(ret));
+        return -1;
     }
-
-    FILE *outfile = fopen("out","wb");
-
-    fwrite(encoded_frame->data, 1, encoded_frame->size, outfile);
-
-    fclose(outfile);
-    sws_freeContext(sws_ctx);
-    av_freep(&yuv_data);
-
-
     return 0;
-    /* AVRational encoder_time_base = (AVRational) {1, 60};
+    /*
+    AVRational encoder_time_base = (AVRational) {1, 60};
     encoded_packet.stream_index = video_track->index;
-
-    int64_t scaled_pts = av_rescale_q(encoded_packet.pts, encoder_time_base, video_track->time_base);
-    encoded_packet.pts = scaled_pts;
 
     int64_t scaled_dts = av_rescale_q(encoded_packet.dts, encoder_time_base, video_track->time_base);
     input.packet.dts = scaled_dts;
 
-    ret = av_write_frame(muxer->av_format_context, &encoded_packet); */
+    ret = av_write_frame(muxer->av_format_context, &encoded_packet);*/
 }
