@@ -47,10 +47,10 @@ struct buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
 static unsigned int     n_buffers;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
-static int              frame_count = 1;
+static int              frame_count = 50;
 struct v4lconvert_data* data;
 static struct v4l2_format actual_fmt, wanted_fmt;
-static int              width = 1280, height = 720;
+static int              width = 640, height = 480;
 
 static void errno_exit(const char *s)
 {
@@ -83,7 +83,7 @@ static void process_image(const void *p, int size)
         assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
         assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
     }
-    fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
+    // fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
 
     // xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
     // wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
@@ -564,11 +564,11 @@ int main(int argc, char **argv)
 
         open_device();
         init_device();
-        init_libav(width,height,32); // 32 is buffer size
+        init_libav(width,height,4); // 4 is buffer size
         start_capturing();
         mainloop();
         stop_capturing();
-        uninit_libav(width,height,32);
+        uninit_libav();
         uninit_device();
         close_device();
 
