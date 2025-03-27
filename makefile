@@ -1,12 +1,12 @@
 NVIDIA_COMPILER := $(shell nvcc --version 2>/dev/null)
-CLIBS   	:=-lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lavfilter -lavdevice -lswresample -lswscale
+CLIBS   	:=-lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lswresample -lswscale
 
 ifndef $(NVIDIA_COMPILER)
-$(info "Using GCC - No CUDA optimizations")
+$(info Using GCC - No CUDA optimizations)
 CC 			:=gcc
 CFLAGS		:=-g -O0 -fsanitize=address -fsanitize=undefined $(CLIBS)
 else
-$(info "Using Nvidia Compiler (CUDA)")
+$(info Using Nvidia Compiler (CUDA))
 CC 			:=nvcc
 CFLAGS		:=-g -O0 $(CLIBS)
 endif

@@ -16,10 +16,10 @@
 
 static char            *dev_name;
 static int              fd = -1;
-static FILE*            fout = NULL;
+// static FILE*            fout = NULL;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
-static int              frame_count = 10;
+static int              frame_count = 40;
 static int              width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
@@ -62,7 +62,7 @@ static void process_image(const void *p, int size)
 	cudaMemcpy(dest_buffer.start, conv_buffer.start, dest_buffer.length, cudaMemcpyDeviceToDevice);
 	// box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
 
-	void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
+	// void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
 	assert(pout != MAP_FAILED);
 	cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
 	munmap(pout,dest_buffer.length);
@@ -78,10 +78,7 @@ void init_memory(){
 	assert(cerr == cudaSuccess);
 	cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
 	assert(cerr == cudaSuccess);
-	if(!out_std){
-		fout = open("out.raw", O_RDWR | O_CREAT);
-		assert(fout != -1);
-	}
+	// if(!out_std){ fout = open("out.raw", O_RDWR | O_CREAT); assert(fout != -1); }
 }
 #else
 #ifndef __GNUC__
@@ -124,8 +121,8 @@ static void process_image(const void *p, int size)
     send_frame(dest_buffer.start, width, height);
     // send_frame(dest_buffer.start, width, height);
 
-    fwrite(conv_buffer.start, conv_buffer.length, 1, fout);
-    fflush(fout);
+    // fwrite(conv_buffer.start, conv_buffer.length, 1, fout);
+    // fflush(fout);
 
     // fflush(stderr);
     // fprintf(stderr, ".");
@@ -213,10 +210,7 @@ static void usage(FILE *fp, int argc, char **argv)
                  "Options:\n"
                  "-d | --device name   Video device name [%s]\n"
                  "-h | --help          Print this message\n"
-                 "-m | --mmap          Use memory mapped buffers [default]\n"
-                 "-r | --read          Use read() calls\n"
-                 "-u | --userp         Use application allocated buffers\n"
-                 "-o | --output        Outputs stream to stdout (default to file out.raw)\n"
+                 "-o | --output        Outputs stream to stdout (default to file out)\n"
                  "-f | --format        Do not force format to  %d by %d\n"
                  "-c | --count         Number of frames to grab [%i]\n"
                  "",
@@ -264,7 +258,6 @@ int main(int argc, char **argv)
                         usage(stdout, argc, argv);
                         exit(EXIT_SUCCESS);
 
-
                 case 'o':
                         out_std=1;
                         break;
@@ -286,12 +279,6 @@ int main(int argc, char **argv)
                 }
         }
 
-    if(!out_std){
-        fout = fopen("out.raw","w");
-        if(fout == NULL){
-            errno_exit("fout");
-        }
-    }else fout = stdout;
     CLEAR(wanted_fmt);
     wanted_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     wanted_fmt.fmt.pix.width       = width;
@@ -319,8 +306,7 @@ int main(int argc, char **argv)
     free(conv_buffer.start);
     free(dest_buffer.start);
 
-    if(!out_std)
-        fclose(fout);
+    // if(!out_std) fclose(fout);
 
     fprintf(stderr, "\n");
     return 0;

@@ -1,7 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <errno.h>
-#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
@@ -20,7 +19,8 @@
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 
-#define PORT 8080
+#include "utils.h"
+
 
 static AVCodec *codec = NULL;
 static AVCodecContext *encoder = NULL;
@@ -31,17 +31,24 @@ static AVPacket *encoded_packet = NULL, *encoded_frame = NULL;
 static struct SwsContext *sws_ctx = NULL;
 static int64_t pts = 0;
 static FILE *outfile = 0;
+
+const int PORT = 8080;
+const char *SERVER_ADDR = "127.0.0.1";
 static int sockfd = 0;
-static struct sockaddr_in address;
+static struct sockaddr_in addr;
 
 void init_libav(const int width, const int height, const int count)
 {
     outfile = fopen("out","wb");
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = inet_addr("127.0.0.1");
-    address.sin_port = htons(PORT);
-    // bind(sockfd, (struct sockaddr*)& address, sizeof(address));
+
+    assert((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) != -1);
+
+    memset(&addr,0,sizeof(struct sockaddr_in));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
+    addr.sin_port = htons(PORT);
+
+    // bind(sockfd, (struct sockaddr*)& addr, sizeof(addr));
 
     av_log_set_level(AV_LOG_ERROR);
     // av_log_set_level(AV_LOG_VERBOSE);
@@ -115,40 +122,38 @@ void init_libav(const int width, const int height, const int count)
     return;
 }
 
-int stream_frame(){
-    int ret = avcodec_receive_packet(encoder, encoded_frame);
-    if(ret == 0) {
-        fprintf(stderr,"Streaming frame...\n");
+static int stream_frame(AVFrame* frame){
+    int ret = avcodec_send_frame(encoder, frame);
+    if(ret != 0) av_errno_exit("AVCodec_send_frame", ret);
 
-        // send(sockfd, encoded_frame->data, encoded_frame->size, MSG_NOSIGNAL);
-        // fprintf(stderr, "Packet size: %d\n",encoded_frame->size);
-        // ret = sendto(sockfd, encoded_frame->data, encoded_frame->size, 0,
-                // (struct sockaddr*)& address, sizeof(address));
-        // if(ret != 0){
-            // fprintf(stderr,"Sendto: %s\n", strerror(errno));
-            // exit(-1);
-        // }
-        fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
+    do{
+        ret = avcodec_receive_packet(encoder, encoded_frame);
+        if(ret == 0) {
+            fprintf(stderr,"Streaming frame...\n");
 
-        encoded_frame->pts = ++pts;
-    }else if(ret != AVERROR(EAGAIN)){
-        fprintf(stderr,"Encoding didn't go well!\n");
-        fprintf(stderr,"%d: %s\n",ret, av_err2str(ret));
-        return -1;
-    }
+            // send(sockfd, encoded_frame->data, encoded_frame->size, MSG_NOSIGNAL);
+            // fprintf(stderr, "Packet size: %d\n",encoded_frame->size);
+            int send_ret = sendto(sockfd, encoded_frame->data, encoded_frame->size, 0, (struct sockaddr*)&addr, sizeof(addr));
+            if(send_ret == -1){
+                fprintf(stderr,"Sendto: %s\n", strerror(errno));
+                // exit(-1);
+            }
+            fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
 
-
+            encoded_frame->pts = ++pts;
+        }else if(ret == AVERROR_EOF){ break;
+        }else if(ret == AVERROR(EAGAIN)){ continue;
+        }else{
+            av_errno_exit("AVCodec_send_frame",ret);
+        }
+    }while(frame == NULL);
     av_packet_unref(encoded_frame); 
     return 0;
 }
 
 void uninit_libav()
 {
-    int ret = avcodec_send_frame(encoder, NULL);
-    if(ret == 0){
-        encoded_frame->pts = ++pts;
-        stream_frame();
-    }
+    stream_frame(NULL);
     fclose(outfile);
 
     avformat_free_context(muxer);
@@ -185,12 +190,7 @@ int send_frame(void *data, const int source_width, const int source_height)
 
     // fprintf(stderr,"!%d || !%d\n",avcodec_is_open(encoder), av_codec_is_encoder(encoder->codec));
 
-    ret = avcodec_send_frame(encoder, yuv_frame);
-    if(ret != 0){
-        fprintf(stderr,"%d: %s\n",ret, av_err2str(ret));
-        assert(ret == 0);
-    }
-    stream_frame();
+    stream_frame(yuv_frame);
 
     return 0;
     /*
