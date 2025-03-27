@@ -6,6 +6,6 @@
 *.out
 out*
 libv4l/
-*/bin/*
-*/obj/*
-*/debug/*
+bin/*
+obj/*
+debug/*
