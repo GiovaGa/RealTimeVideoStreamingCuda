@@ -1,7 +1,6 @@
 NVIDIA_COMPILER := $(shell nvcc --version 2>/dev/null)
 CLIBS   	:=-lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lswresample -lswscale
 
-<<<<<<< Updated upstream
 ifdef NVIDIA_COMPILER
 $(info Using Nvidia Compiler - CUDA)
 CC 		:=nvcc

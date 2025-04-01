@@ -6,6 +6,8 @@
 
 #include <libavcodec/avcodec.h> // av_err2str
 
+#include "utils.h"
+
 void errno_exit(const char *s)
 {
     fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));

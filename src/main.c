@@ -20,7 +20,7 @@ static int              fd = -1;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
 static int              frame_count = 40;
-static int              width = 640, height = 480;
+static const int 	width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
@@ -28,6 +28,8 @@ static struct v4l2_format actual_fmt, wanted_fmt;
 
 #ifdef __NVCC__
 #include <nppdefs.h>
+
+static buffer d_p = {NULL, 0};
 
 static void process_image(const void *p, int size)
 {
@@ -60,12 +62,12 @@ static void process_image(const void *p, int size)
 	    conv_buffer.start,width*3, nppSize);
 	
 	cudaMemcpy(dest_buffer.start, conv_buffer.start, dest_buffer.length, cudaMemcpyDeviceToDevice);
-	// box_blur((unsigned char*)conv_buffer.start, (unsigned char*) dest_buffer.start, width, height);
+	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
 
 	// void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
-	assert(pout != MAP_FAILED);
-	cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
-	munmap(pout,dest_buffer.length);
+	// assert(pout != MAP_FAILED);
+	// cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
+	// munmap(pout,dest_buffer.length);
 }
 
 void init_memory(){

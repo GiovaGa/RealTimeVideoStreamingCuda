@@ -21,6 +21,7 @@
 #include <libswscale/swscale.h>
 
 #include "utils.h"
+#include "streaming.h"
 
 
 static AVCodec *codec = NULL;
