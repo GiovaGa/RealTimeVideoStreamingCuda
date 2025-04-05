@@ -4,11 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 // networking
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+// #include <sys/socket.h>
+// #include <netinet/in.h>
+// #include <arpa/inet.h>
 
 // libav*
 #include <libavcodec/avcodec.h>
@@ -34,24 +35,28 @@ static FILE *outfile = 0;
 
 const int PORT = 8080;
 const char *SERVER_ADDR = "127.0.0.1";
-static int sockfd = 0;
-static struct sockaddr_in addr;
+// static int sockfd = 0;
+// static struct sockaddr_in addr;
 
 void init_libav(const int width, const int height, const int count)
 {
     outfile = fopen("out","wb");
 
-    assert((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) != -1);
+    // assert((sockfd = socket(AF_INET, SOCK_STREAM, 0)) != -1);
 
-    memset(&addr,0,sizeof(struct sockaddr_in));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
-    addr.sin_port = htons(PORT);
+    // memset(&addr,0,sizeof(struct sockaddr_in));
+    // addr.sin_family = AF_INET;
+    // addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
+    // addr.sin_port = htons(PORT);
+    // connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
 
     // bind(sockfd, (struct sockaddr*)& addr, sizeof(addr));
 
+#ifdef DEBUG
+    av_log_set_level(AV_LOG_VERBOSE);
+#else
     av_log_set_level(AV_LOG_ERROR);
-    // av_log_set_level(AV_LOG_VERBOSE);
+#endif
 
     frame = av_frame_alloc();
     if(!frame){         fprintf(stderr, "Could not allocate video frame\n"); exit(1); }
@@ -79,6 +84,7 @@ void init_libav(const int width, const int height, const int count)
 
     encoded_frame = av_packet_alloc();
     assert(encoded_frame);
+    // encoded_packet = av_packet_alloc();
 
     codec = avcodec_find_encoder(AV_CODEC_ID_H264);
     // const char *codec_name = "rtp";  // TODO: change to use yuv422 pixel format as input
@@ -123,31 +129,44 @@ void init_libav(const int width, const int height, const int count)
 }
 
 static int stream_frame(AVFrame* frame){
+    if(frame != NULL) frame->pts = ++pts;
     int ret = avcodec_send_frame(encoder, frame);
     if(ret != 0) av_errno_exit("AVCodec_send_frame", ret);
 
     do{
         ret = avcodec_receive_packet(encoder, encoded_frame);
         if(ret == 0) {
+            encoded_frame->pts = ++pts;
             fprintf(stderr,"Streaming frame...\n");
 
             // send(sockfd, encoded_frame->data, encoded_frame->size, MSG_NOSIGNAL);
             // fprintf(stderr, "Packet size: %d\n",encoded_frame->size);
-            int send_ret = sendto(sockfd, encoded_frame->data, encoded_frame->size, 0, (struct sockaddr*)&addr, sizeof(addr));
-            if(send_ret == -1){
-                fprintf(stderr,"Sendto: %s\n", strerror(errno));
+            // int send_ret = sendto(sockfd, encoded_frame->data, encoded_frame->size, 0, (struct sockaddr*)&addr, sizeof(addr));
+            // if(send_ret == -1){
+                // fprintf(stderr,"Sendto: %s\n", strerror(errno));
                 // exit(-1);
-            }
+            // }
             fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
 
-            encoded_frame->pts = ++pts;
+            AVRational encoder_time_base = (AVRational) {1, 30};
+            encoded_frame->stream_index = video_track->index;
+            int64_t scaled_dts = av_rescale_q(encoded_frame->dts, encoder_time_base, video_track->time_base);
+            // input.packet.dts = scaled_dts;
+
+            fprintf(stderr,"...\n");
+            ret = av_write_frame(muxer, encoded_frame);
+
+            if(ret == -1){
+                av_errno_exit("AV_write_frame",ret);
+            }
+
         }else if(ret == AVERROR_EOF){ break;
         }else if(ret == AVERROR(EAGAIN)){ continue;
         }else{
             av_errno_exit("AVCodec_send_frame",ret);
         }
+        av_packet_unref(encoded_frame); 
     }while(frame == NULL);
-    av_packet_unref(encoded_frame); 
     return 0;
 }
 
@@ -168,6 +187,7 @@ void uninit_libav()
     av_frame_unref(yuv_frame);
     // av_frame_free(&frame);
     av_frame_unref(frame);
+    // close(sockfd);
 }
 
 int send_frame(void *data, const int source_width, const int source_height)
@@ -179,9 +199,7 @@ int send_frame(void *data, const int source_width, const int source_height)
     if (ret < 0) exit(1);
 
     memcpy(frame->data[0],data,source_width*source_height*3);
-    frame->pts = ++pts;
     
-    // Convert the frame from RGB to YUV420p
     ret = av_frame_make_writable(yuv_frame);
     if (ret < 0) exit(1);
 
@@ -193,12 +211,4 @@ int send_frame(void *data, const int source_width, const int source_height)
     stream_frame(yuv_frame);
 
     return 0;
-    /*
-    AVRational encoder_time_base = (AVRational) {1, 60};
-    encoded_packet.stream_index = video_track->index;
-
-    int64_t scaled_dts = av_rescale_q(encoded_packet.dts, encoder_time_base, video_track->time_base);
-    input.packet.dts = scaled_dts;
-
-    ret = av_write_frame(muxer->av_format_context, &encoded_packet);*/
 }

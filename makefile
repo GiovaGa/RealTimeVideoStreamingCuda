@@ -1,14 +1,16 @@
 NVIDIA_COMPILER := $(shell nvcc --version 2>/dev/null)
 CLIBS   	:=-lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lswresample -lswscale
 
-ifndef $(NVIDIA_COMPILER)
-$(info Using GCC - No CUDA optimizations)
-CC 			:=gcc
-CFLAGS		:=-g -O0 -fsanitize=address -fsanitize=undefined $(CLIBS)
+<<<<<<< Updated upstream
+ifdef NVIDIA_COMPILER
+$(info Using Nvidia Compiler - CUDA)
+CC 		:=nvcc
+CLIBS		:=-lnppc -lnppicc $(CLIBS)
+CFLAGS		:=-g -O0 -DDEBUG $(CLIBS)
 else
-$(info Using Nvidia Compiler (CUDA))
-CC 			:=nvcc
-CFLAGS		:=-g -O0 $(CLIBS)
+$(info Using GCC - No CUDA optimizations)
+CC 		:=gcc
+CFLAGS		:=-g -O0 -DDEBUG -fsanitize=address -fsanitize=undefined $(CLIBS)
 endif
 
 CCOBJFLAGS 	:= $(CFLAGS) -c
@@ -19,7 +21,7 @@ OBJ_PATH= obj
 BIN_PATH= bin
 DBG_PATH := debug
 TARGET 	= $(BIN_PATH)/main
-
+.PHONY : all clean release
 
 SRC := $(foreach x, $(SRC_PATH), $(wildcard $(addprefix $(x)/*,.c*)))
 OBJ := $(addprefix $(OBJ_PATH)/, $(addsuffix .o, $(notdir $(basename $(SRC)))))
@@ -33,8 +35,8 @@ makedir:
 debug: $(TARGET)
 
 release: clean
-# release: CFLAGS := -DNDEBUG -O2 -g $(CLIBS)
-release: CFLAGS := -O2 -g $(CLIBS)
+# release: CFLAGS := -DNDEBUG -O2 $(CLIBS)
+release: CFLAGS := -O2 $(CLIBS)
 release: CCOBJFLAGS	:= $(CFLAGS) -c
 release: $(TARGET)
 
