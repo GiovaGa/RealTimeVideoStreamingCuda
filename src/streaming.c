@@ -32,27 +32,13 @@ static AVFrame *frame = NULL, *yuv_frame = NULL;
 static AVPacket *encoded_packet = NULL, *encoded_frame = NULL;
 static struct SwsContext *sws_ctx = NULL;
 static int64_t pts = 0;
-static FILE *outfile = 0;
+// static FILE *outfile = 0;
 
-const int PORT = 8080;
-const char *SERVER_ADDR = "127.0.0.1";
-// static int sockfd = 0;
-// static struct sockaddr_in addr;
+#define OUTPUT_URL "rtp://127.0.0.1:8080"
 
 void init_libav(const int width, const int height, const int count)
 {
-    outfile = fopen("out","wb");
-
-    // assert((sockfd = socket(AF_INET, SOCK_STREAM, 0)) != -1);
-
-    // memset(&addr,0,sizeof(struct sockaddr_in));
-    // addr.sin_family = AF_INET;
-    // addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
-    // addr.sin_port = htons(PORT);
-    // connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
-
-    // bind(sockfd, (struct sockaddr*)& addr, sizeof(addr));
-
+    // outfile = fopen("out","wb");
 #ifdef DEBUG
     av_log_set_level(AV_LOG_VERBOSE);
 #else
@@ -112,19 +98,28 @@ void init_libav(const int width, const int height, const int count)
     assert(ret == 0);
 
     // set up muxer
-    muxer = avformat_alloc_context();
-    // avformat_alloc_output_context2(&muxer, NULL, "flv", RTMP_URL)
-    muxer->oformat = av_guess_format("matroska", "test.mkv", NULL);
+    
+    // const char *output_file = "test.mp4";
+    // avformat_alloc_output_context2(&muxer, NULL, NULL, output_file);
+    // if (avio_open(&muxer->pb, output_file, AVIO_FLAG_WRITE) < 0) { fprintf(stderr, "Could not open output file '%s'\n", output_file); exit(1); }
+
+    avformat_network_init();
+    avformat_alloc_output_context2(&muxer, NULL, "rtp", OUTPUT_URL);
+
+    if (avio_open(&muxer->pb, OUTPUT_URL, AVIO_FLAG_WRITE) < 0) { fprintf(stderr, "Could not open RTP output stream '%s'\n", OUTPUT_URL); exit(1); }
 
     video_track = avformat_new_stream(muxer, NULL);
-    // muxer->oformat->video_codec = AV_CODEC_ID_H264;
-    // AVStream* audio_track = avformat_new_stream(muxer, NULL);
-    // muxer->oformat->audio_codec = AV_CODEC_ID_OPUS;
 
     avcodec_parameters_from_context(video_track->codecpar, encoder); 
+    video_track->codecpar->codec_id = AV_CODEC_ID_H264; 
     video_track->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    video_track->time_base = (AVRational) {1,30};
+    video_track->codecpar->width = width;
+    video_track->codecpar->height = height;
+    video_track->codecpar->format = AV_PIX_FMT_YUV420P;
+    video_track->time_base = encoder->time_base;
     video_track->avg_frame_rate = (AVRational) {30, 1};
+
+    if (avformat_write_header(muxer, NULL) < 0) { fprintf(stderr, "Error occurred when opening output file\n"); exit(1); }
 
     return;
 }
@@ -139,29 +134,15 @@ static int stream_frame(AVFrame* frame){
         if(ret == 0) {
             encoded_frame->pts = ++pts;
             fprintf(stderr,"Streaming frame...\n");
+            // fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
 
-            // send(sockfd, encoded_frame->data, encoded_frame->size, MSG_NOSIGNAL);
-            // fprintf(stderr, "Packet size: %d\n",encoded_frame->size);
-            // int send_ret = sendto(sockfd, encoded_frame->data, encoded_frame->size, 0, (struct sockaddr*)&addr, sizeof(addr));
-            // if(send_ret == -1){
-                // fprintf(stderr,"Sendto: %s\n", strerror(errno));
-                // exit(-1);
-            // }
-            fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
-
-            AVRational encoder_time_base = (AVRational) {1, 30};
             encoded_frame->stream_index = video_track->index;
-            int64_t scaled_dts = av_rescale_q(encoded_frame->dts, encoder_time_base, video_track->time_base);
-            // input.packet.dts = scaled_dts;
 
-            fprintf(stderr,"...\n");
             ret = av_write_frame(muxer, encoded_frame);
-
-            if(ret == -1){
-                av_errno_exit("AV_write_frame",ret);
-            }
-
-        }else if(ret == AVERROR_EOF){ break;
+            if(ret == -1){ av_errno_exit("AV_write_frame",ret); }
+        }else if(ret == AVERROR_EOF){
+            av_write_trailer(muxer);
+            break;
         }else if(ret == AVERROR(EAGAIN)){ continue;
         }else{
             av_errno_exit("AVCodec_send_frame",ret);
@@ -174,12 +155,17 @@ static int stream_frame(AVFrame* frame){
 void uninit_libav()
 {
     stream_frame(NULL);
-    fclose(outfile);
+    // fclose(outfile);
 
+
+    if (muxer && !(muxer->oformat->flags & AVFMT_NOFILE))
+        avio_closep(&muxer->pb);
     avformat_free_context(muxer);
     // avio_format_context_unref(video_track);
     // av_packet_free(&encoded_packet); 
     if(encoded_packet != NULL) av_packet_unref(encoded_packet); 
+    // av_packet_free(&encoded_frame); 
+    if(encoded_frame != NULL) av_packet_unref(encoded_frame); 
 
 
     avcodec_free_context(&encoder);
@@ -207,9 +193,6 @@ int send_frame(void *data, const int source_width, const int source_height)
     // Convert the RGB frame to YUV420p
     sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, source_height, yuv_frame->data, yuv_frame->linesize);
 
-    // fprintf(stderr,"!%d || !%d\n",avcodec_is_open(encoder), av_codec_is_encoder(encoder->codec));
-
     stream_frame(yuv_frame);
-
     return 0;
 }
