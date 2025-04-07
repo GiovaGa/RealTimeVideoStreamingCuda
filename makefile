@@ -6,13 +6,14 @@ $(info Using Nvidia Compiler - CUDA)
 CC 		:=nvcc
 CLIBS		:=-lnppc -lnppicc $(CLIBS)
 CFLAGS		:=-g -O0 -DDEBUG $(CLIBS)
+CCOBJFLAGS 	:= $(CFLAGS) -c
 else
 $(info Using GCC - No CUDA optimizations)
 CC 		:=gcc
 CFLAGS		:=-g -O0 -DDEBUG -fsanitize=address -fsanitize=undefined $(CLIBS)
+CCOBJFLAGS 	:= $(CFLAGS) -x c -c
 endif
 
-CCOBJFLAGS 	:= $(CFLAGS) -c
 DBGFLAGS 	:= -g
 
 SRC_PATH= src
@@ -36,7 +37,7 @@ debug: $(TARGET)
 release: clean
 # release: CFLAGS := -DNDEBUG -O2 $(CLIBS)
 release: CFLAGS := -O2 $(CLIBS)
-release: CCOBJFLAGS	:= $(CFLAGS) -c
+release: CCOBJFLAGS	:= $(CFLAGS) -x c -c
 release: $(TARGET)
 
 

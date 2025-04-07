@@ -20,10 +20,11 @@ static int              fd = -1;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
 static int              frame_count = 40;
+// static const int 	width = 1920, height = 1080;
 static const int 	width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
-static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0};
+static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0}, libav_buffer = {NULL,0};
 static struct v4l2_format actual_fmt, wanted_fmt;
 
 #ifdef __NVCC__
@@ -42,11 +43,13 @@ static void process_image(const void *p, int size)
 		cudaFree(conv_buffer.start);
 		cudaFree(dest_buffer.start);
 		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
-		conv_buffer.length = dest_buffer.length = ((size+1)/2)*3;
+		libav_buffer.length = conv_buffer.length = dest_buffer.length = ((size+1)/2)*3;
 		cudaError_t cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
 		assert(cerr == cudaSuccess);
 		cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
 		assert(cerr == cudaSuccess);
+		free(libav_buffer.start);
+		libav_buffer.start = malloc(libav_buffer.length);
 	}
 	cudaMemcpy(d_p.start,p,size,cudaMemcpyHostToDevice);
 
@@ -61,26 +64,10 @@ static void process_image(const void *p, int size)
 	    d_p.start,width*2,
 	    conv_buffer.start,width*3, nppSize);
 	
-	cudaMemcpy(dest_buffer.start, conv_buffer.start, dest_buffer.length, cudaMemcpyDeviceToDevice);
 	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
+	cudaMemcpy(libav_buffer.start, dest_buffer.start,libav_buffer.length,cudaMemcpyDeviceToHost);
 
-	// void* pout = mmap(NULL, dest_buffer.length, PROT_WRITE, MAP_PRIVATE, fout, 0);
-	// assert(pout != MAP_FAILED);
-	// cudaMemcpy(pout,dest_buffer.start, dest_buffer.length, cudaMemcpyDeviceToHost);
-	// munmap(pout,dest_buffer.length);
-}
-
-void init_memory(){
-	cudaError_t cerr;
-	d_p.length = width*height*2;
-	cerr = cudaMalloc(&d_p.start, d_p.length);
-	assert(cerr == cudaSuccess);
-	conv_buffer.length = dest_buffer.length = (width*height)*3;
-	cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
-	assert(cerr == cudaSuccess);
-	cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
-	assert(cerr == cudaSuccess);
-	// if(!out_std){ fout = open("out.raw", O_RDWR | O_CREAT); assert(fout != -1); }
+    	send_frame(libav_buffer.start, width, height);
 }
 #else
 #ifndef __GNUC__
@@ -305,8 +292,14 @@ int main(int argc, char **argv)
     uninit_device(buffers);
     close_device(fd); fd = -1;
 
+#ifdef __NVCC__
+    cudaFree(conv_buffer.start);
+    cudaFree(dest_buffer.start);
+#else
     free(conv_buffer.start);
     free(dest_buffer.start);
+#endif
+    free(libav_buffer.start);
 
     // if(!out_std) fclose(fout);
 
