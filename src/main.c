@@ -18,9 +18,9 @@ static char            *dev_name;
 static int              fd = -1;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
-static int              frame_count = 40;
-// static const int 	width = 1920, height = 1080;
-static const int 	width = 640, height = 480;
+static size_t              frame_count = 40;
+// static const size_t 	width = 1920, height = 1080;
+static const size_t 	width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0}, libav_buffer = {NULL,0};
@@ -37,7 +37,7 @@ static struct v4l2_format actual_fmt, wanted_fmt = {
 
 static buffer d_p = {NULL, 0};
 
-static void process_image(const void *p, int size)
+static void process_image(const void *p, size_t size)
 {
 	if(d_p.length < size){
 		d_p.length = size;
@@ -78,7 +78,7 @@ static void process_image(const void *p, int size)
 #endif
 #include <libv4lconvert.h>
 
-static void process_image(const void *p, int size)
+static void process_image(const void *p, size_t size)
 {
     assert(actual_fmt.fmt.pix.width == width);
     assert(actual_fmt.fmt.pix.height == height);
@@ -114,7 +114,6 @@ static void process_image(const void *p, int size)
 static int read_frame(const int fd)
 {
         struct v4l2_buffer buf;
-        unsigned int i;
 
         CLEAR(buf);
 
@@ -144,10 +143,10 @@ static int read_frame(const int fd)
         return 1;
 }
 
-static void mainloop(unsigned int count)
+static void mainloop(size_t count)
 {
         int t0, t1;
-        while (count-- > 0) {
+        do{
                 t0 = clock();
                 for (;;) {
                         fd_set fds;
@@ -178,8 +177,10 @@ static void mainloop(unsigned int count)
                         /* EAGAIN - continue select loop. */
                 }
                 t1 = clock();
+#ifdef DEBUG
                 fprintf(stderr,"Frametime %.3f ms -> %.2f\n",((float)t1-t0)*1000/CLOCKS_PER_SEC, CLOCKS_PER_SEC/((float)t1-t0));
-        }
+#endif
+        }while (--count > 0);
 }
 
 
@@ -193,8 +194,8 @@ static void usage(FILE *fp, int argc, char **argv)
                  "-d | --device name   Video device name [%s]\n"
                  "-h | --help          Print this message\n"
                  "-o | --output        Outputs stream to stdout (default to file out)\n"
-                 "-f | --format        Do not force format to  %d by %d\n"
-                 "-c | --count         Number of frames to grab [%i]\n"
+                 "-f | --format        Do not force format to  %li by %li\n"
+                 "-c | --count         Number of frames to grab [%li], 0 for no limit\n"
                  "",
                  argv[0], dev_name, width, height, frame_count);
 }
@@ -282,6 +283,5 @@ int main(int argc, char **argv)
     free(libav_buffer.start);
 
 
-    fprintf(stderr, "\n");
     return 0;
 }

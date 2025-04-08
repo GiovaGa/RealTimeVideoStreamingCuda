@@ -132,8 +132,6 @@ static int stream_frame(AVFrame* frame){
         ret = avcodec_receive_packet(encoder, encoded_frame);
         if(ret == 0) {
             encoded_frame->pts = ++pts;
-            fprintf(stderr,"Streaming frame...\n");
-            // fwrite(encoded_frame->data, encoded_frame->size, 1, outfile);
 
             encoded_frame->stream_index = video_track->index;
 
@@ -178,9 +176,6 @@ void uninit_libav()
 
 int send_frame(void *restrict data, const int source_width, const int source_height, const enum format_enum fmt)
 {
-    // fprintf(stderr,"%dx%d\n",source_width,source_height);
-    // fprintf(stderr,"linesize = %d\n",frame->linesize[pts]);
-
     int ret = av_frame_make_writable(yuv_frame);
     if (ret < 0) exit(1);
     switch(fmt){
