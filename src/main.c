@@ -16,7 +16,6 @@
 
 static char            *dev_name;
 static int              fd = -1;
-// static FILE*            fout = NULL;
 static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
 static int              frame_count = 40;
@@ -25,7 +24,13 @@ static const int 	width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0}, libav_buffer = {NULL,0};
-static struct v4l2_format actual_fmt, wanted_fmt;
+static struct v4l2_format actual_fmt, wanted_fmt = {
+    .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+    .fmt.pix.width       = width,
+    .fmt.pix.height      = height,
+    .fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24,
+    .fmt.pix.field       = V4L2_FIELD_INTERLACED
+};
 
 #ifdef __NVCC__
 #include <nppdefs.h>
@@ -39,35 +44,33 @@ static void process_image(const void *p, int size)
 		cudaError_t cerr = cudaMalloc(&d_p.start, size);
 		assert(cerr == cudaSuccess);
 	}
-	if(conv_buffer.length < ((size+1)/2)*3){
+	if(conv_buffer.length < width*height*3){
 		cudaFree(conv_buffer.start);
 		cudaFree(dest_buffer.start);
-		// YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
-		libav_buffer.length = conv_buffer.length = dest_buffer.length = ((size+1)/2)*3;
-		cudaError_t cerr = cudaMalloc(&conv_buffer.start, conv_buffer.length);
-		assert(cerr == cudaSuccess);
-		cerr = cudaMalloc(&dest_buffer.start, dest_buffer.length);
-		assert(cerr == cudaSuccess);
 		free(libav_buffer.start);
-		libav_buffer.start = malloc(libav_buffer.length);
+        conv_buffer.length = dest_buffer.length = width*height*3;
+		libav_buffer.length = width*height*2;
+		assert(cudaMalloc(&conv_buffer.start, conv_buffer.length) == cudaSuccess);
+		assert(cudaMalloc(&dest_buffer.start, dest_buffer.length) == cudaSuccess);
+		assert((libav_buffer.start = malloc(libav_buffer.length)) != NULL);
 	}
 	cudaMemcpy(d_p.start,p,size,cudaMemcpyHostToDevice);
 
-	// fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
-
-	xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
 	assert(actual_fmt.fmt.pix.width == width);
 	assert(actual_fmt.fmt.pix.height == height);
 
 	const NppiSize nppSize = {.width = width, .height = height};
-	const int r = nppiYUV422ToRGB_8u_C2C3R(
-	    d_p.start,width*2,
-	    conv_buffer.start,width*3, nppSize);
+	assert(NPP_SUCCESS == nppiYUV422ToRGB_8u_C2C3R(
+                d_p.start,width*2,
+                conv_buffer.start,width*3, nppSize));
 	
 	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
+    assert(NPP_SUCCESS == nppiRGBToYUV420_8u_P3R(
+                dest_buffer.start,width*3,
+                d_p.start,width*2, nppSize));
 	cudaMemcpy(libav_buffer.start, dest_buffer.start,libav_buffer.length,cudaMemcpyDeviceToHost);
 
-    	send_frame(libav_buffer.start, width, height);
+    send_frame(libav_buffer.start, width, height, YUV420);
 }
 #else
 #ifndef __GNUC__
@@ -77,28 +80,21 @@ static void process_image(const void *p, int size)
 
 static void process_image(const void *p, int size)
 {
-    // fprintf(stderr,"Actual frame dims: %d x %d\n", actual_fmt.fmt.pix.width, actual_fmt.fmt.pix.height);
-    // fprintf(stderr,"Wanted frame dims: %d x %d\n", wanted_fmt.fmt.pix.width, wanted_fmt.fmt.pix.height);
     assert(actual_fmt.fmt.pix.width == width);
     assert(actual_fmt.fmt.pix.height == height);
     if(conv_buffer.length < width*height*3){
         free(conv_buffer.start);
         free(dest_buffer.start);
-        // YUYV (2 bytes per pixel) -> RGB24 (3 bytes per pixel)
+		free(libav_buffer.start);
         conv_buffer.length = dest_buffer.length = width*height*3;
         assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
         assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
     }
-    // fprintf(stderr,"Size: %d vs. %ld\n",size, conv_buffer.length);
 
-    // xioctl(fd, VIDIOC_G_FMT, &actual_fmt);
-    // wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
-
-
-    const int r = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
+    int ret = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
         (uint8_t *)p, 2*width*height,
         (uint8_t *)conv_buffer.start,conv_buffer.length);
-    if(r == -1){
+    if(ret == -1){
         fprintf(stderr,"V4lconvert: %s\n",v4lconvert_get_error_message(data));
         exit(-1);
     }else{
@@ -107,14 +103,11 @@ static void process_image(const void *p, int size)
 
     box_blur((uint8_t *)conv_buffer.start, (uint8_t *) dest_buffer.start, width, height);
 
-    send_frame(dest_buffer.start, width, height);
-    // send_frame(dest_buffer.start, width, height);
-
-    // fwrite(conv_buffer.start, conv_buffer.length, 1, fout);
-    // fflush(fout);
-
-    // fflush(stderr);
-    // fprintf(stderr, ".");
+    if(ret == -1){
+        fprintf(stderr,"V4lconvert: %s\n",v4lconvert_get_error_message(data));
+        exit(-1);
+    }
+    send_frame(dest_buffer.start, width, height, RGB24);
 }
 #endif
 
@@ -212,9 +205,6 @@ static const struct option
 long_options[] = {
         { "device", required_argument, NULL, 'd' },
         { "help",   no_argument,       NULL, 'h' },
-        { "mmap",   no_argument,       NULL, 'm' },
-        { "read",   no_argument,       NULL, 'r' },
-        { "userp",  no_argument,       NULL, 'u' },
         { "output", no_argument,       NULL, 'o' },
         { "format", no_argument,       NULL, 'f' },
         { "count",  required_argument, NULL, 'c' },
@@ -268,16 +258,6 @@ int main(int argc, char **argv)
                 }
         }
 
-    CLEAR(wanted_fmt);
-    wanted_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    wanted_fmt.fmt.pix.width       = width;
-    wanted_fmt.fmt.pix.height      = height;
-    wanted_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
-    wanted_fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
-
-
-
-
     fd = open_device(dev_name);
     buffers = init_device(fd, force_format,&wanted_fmt,&actual_fmt);
     init_libav(width,height,4); // 4 is buffer size
@@ -301,7 +281,6 @@ int main(int argc, char **argv)
 #endif
     free(libav_buffer.start);
 
-    // if(!out_std) fclose(fout);
 
     fprintf(stderr, "\n");
     return 0;

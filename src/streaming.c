@@ -32,7 +32,6 @@ static AVFrame *frame = NULL, *yuv_frame = NULL;
 static AVPacket *encoded_packet = NULL, *encoded_frame = NULL;
 static struct SwsContext *sws_ctx = NULL;
 static int64_t pts = 0;
-// static FILE *outfile = 0;
 
 #define OUTPUT_URL "rtp://127.0.0.1:8080"
 
@@ -177,22 +176,27 @@ void uninit_libav()
     // close(sockfd);
 }
 
-int send_frame(void *data, const int source_width, const int source_height)
+int send_frame(void *restrict data, const int source_width, const int source_height, const enum format_enum fmt)
 {
     // fprintf(stderr,"%dx%d\n",source_width,source_height);
     // fprintf(stderr,"linesize = %d\n",frame->linesize[pts]);
 
-    int ret = av_frame_make_writable(frame);
+    int ret = av_frame_make_writable(yuv_frame);
     if (ret < 0) exit(1);
+    switch(fmt){
+        case RGB24:
+            memcpy(frame->data[0],data,source_width*source_height*3);
+            ret = av_frame_make_writable(frame);
+            if (ret < 0) exit(1);
+            // Convert the RGB frame to YUV420p
+            sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, source_height, yuv_frame->data, yuv_frame->linesize);
 
-    memcpy(frame->data[0],data,source_width*source_height*3);
-    
-    ret = av_frame_make_writable(yuv_frame);
-    if (ret < 0) exit(1);
+            break;
+        case YUV420:
+            memcpy(yuv_frame->data[0],data,source_width*source_height*2);
 
-    // Convert the RGB frame to YUV420p
-    sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, source_height, yuv_frame->data, yuv_frame->linesize);
-
+    }
     stream_frame(yuv_frame);
+
     return 0;
 }
