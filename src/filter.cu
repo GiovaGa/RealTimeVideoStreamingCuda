@@ -24,31 +24,34 @@ void box_blur(const uint8_t *restrict src, uint8_t *restrict dest, const size_t 
     for(size_t i = 0;i < height;++i){
 #endif
         uint32_t tmp[3] = {0,0,0};
+        const int32_t i1 = i-((dimy-1)/2),
+                      i2 = i+((dimy+1)/2);
 
-        for(size_t i1 = maxInt(0,i-(dimy)/2);i1 < minInt(i+(dimy+1)/2,height);++i1){
+        for(size_t ii = maxInt(0,i1);ii < minInt(i2,height);++ii){
             for(size_t j1 = 0;j1 < minInt((dimx-1)/2,width);++j1){
+#pragma omp simd
                 for(size_t ch = 0; ch < 3;++ch){
-                    tmp[ch] += src[3*(width*i1+j1)+ch];
+                    tmp[ch] += src[3*(width*ii+j1)+ch];
                 }
             }
         }
-        const size_t i1 = i-((dimy-1)/2),
-                     i2 = i+((dimy+1)/2);
         for(size_t j = 0;j < width;++j){
-            const size_t j1 = j-(dimx+1)/2,
-                         j2 = j+(dimx-1)/2;
+            const int32_t j1 = j-(dimx-1)/2,
+                          j2 = j+(dimx+1)/2;
 
             for(size_t ii = maxInt(0,i1);ii < minInt(i2,height);++ii){
+#pragma omp simd
                 for(size_t ch = 0; ch < 3;++ch){
-                    tmp[ch] += (j2 < width)?src[3*(width*i1+j2)+ch]:0;
-                    tmp[ch] -= (j1 < width)?src[3*(width*i1+j1)+ch]:0;
+                    tmp[ch] += (j2 < width)?src[3*(width*ii+j2)+ch]:0;
+                    tmp[ch] -= (j1 >= 0)?src[3*(width*ii+j1)+ch]:0;
                 }
             }
 
-            const uint32_t cnt = (((i2 < height)?i2:height) - ((i1 < height)?i1:0))*
-                                 (((j2 < width )?j2:width ) - ((j1 < width )?j1:0));
+            const uint32_t cnt = (((i2 < height)?i2:height) - ((i1 >= 0)?i1:0))*
+                                 (((j2 < width )?j2:width ) - ((j1 >= 0)?j1:0));
+#pragma omp simd
             for(size_t ch = 0; ch < 3;++ch){
-                dest[3*(width*i+j)+ch] = (uint8_t)(tmp[ch]/cnt);
+                dest[3*(width*i+j)+ch] = (uint8_t)(((float)tmp[ch])/cnt);
             }
         }
 #ifndef __NVCC__
