@@ -8,11 +8,12 @@
 #include <stdint.h>
 #include "filter.h"
 
-static const size_t dimx = 12, dimy = dimx; 
+static const int32_t dimx = 11, dimy = dimx; 
 
 #define minInt(a,b) (((a)<(b))?(a):(b))
 #define maxInt(a,b) (((a)<(b))?(b):(a))
 
+#define index(i,j,ch) (3*(width*(i)+(j))+(ch))
 
 #ifdef __NVCC__
 __global__ void cuda_box_blur(const uint8_t __restrict__ *src, uint8_t __restrict__ *dest, const size_t width, const size_t height){
@@ -21,37 +22,55 @@ __global__ void cuda_box_blur(const uint8_t __restrict__ *src, uint8_t __restric
     if(i > height) return;
 #else
 void box_blur(const uint8_t *restrict src, uint8_t *restrict dest, const size_t width, const size_t height){
-    for(size_t i = 0;i < height;++i){
+    for(int32_t i = 0;i < height;++i){
 #endif
-        uint32_t tmp[3] = {0,0,0};
-        const int32_t i1 = i-((dimy-1)/2),
-                      i2 = i+((dimy+1)/2);
+        const int32_t i1 = maxInt(i-((dimy)/2),0),
+                      i2 = minInt(i+((dimy+1)/2),height);
+        int32_t cnt = 0;
+        int32_t tmp[3] = {0,0,0};
+        int32_t j1 = 0,
+                j2 = ((dimx-1)/2);
 
-        for(size_t ii = maxInt(0,i1);ii < minInt(i2,height);++ii){
-            for(size_t j1 = 0;j1 < minInt((dimx-1)/2,width);++j1){
-#pragma omp simd
+        for(size_t jj = j1;jj < j2;++jj){
+            for(size_t ii = i1;ii < i2;++ii){
                 for(size_t ch = 0; ch < 3;++ch){
-                    tmp[ch] += src[3*(width*ii+j1)+ch];
+                    tmp[ch] += src[index(ii,jj,ch)];
                 }
+                ++cnt;
             }
         }
-        for(size_t j = 0;j < width;++j){
-            const int32_t j1 = j-(dimx-1)/2,
-                          j2 = j+(dimx+1)/2;
 
-            for(size_t ii = maxInt(0,i1);ii < minInt(i2,height);++ii){
-#pragma omp simd
-                for(size_t ch = 0; ch < 3;++ch){
-                    tmp[ch] += (j2 < width)?src[3*(width*ii+j2)+ch]:0;
-                    tmp[ch] -= (j1 >= 0)?src[3*(width*ii+j1)+ch]:0;
+        for(int32_t j = 0;j < width;++j){
+            j1 = j-((dimx)/2), j2 = j+((dimx+1)/2);
+
+            for(size_t ii = i1;ii < i2;++ii){
+                if(j2 < width){
+                    for(size_t ch = 0; ch < 3;++ch){
+                        tmp[ch] += src[index(ii,j2,ch)];
+                    }
+                    ++cnt;
+                }
+                if(j1 > 0){
+                    for(size_t ch = 0; ch < 3;++ch){
+                        tmp[ch] -= src[index(ii,j1-1,ch)];
+                    }
+                    --cnt;
                 }
             }
 
-            const uint32_t cnt = (((i2 < height)?i2:height) - ((i1 >= 0)?i1:0))*
-                                 (((j2 < width )?j2:width ) - ((j1 >= 0)?j1:0));
-#pragma omp simd
+            const int32_t jj1 = maxInt(j1,0),
+                          jj2 = minInt(j2,width);
+
+            assert(cnt > 0);
+            fprintf(stderr,"%d == (%d-%d)*(%d-%d)\n",cnt,i2,i1,jj2,jj1);
+            assert(cnt == (i2-i1)*(jj2-jj1));
+
+            assert(tmp[0] >= 0);
+            assert(tmp[0] <= 256*cnt);
+            cnt = (i2-i1)*(jj2-jj1);
+
             for(size_t ch = 0; ch < 3;++ch){
-                dest[3*(width*i+j)+ch] = (uint8_t)(((float)tmp[ch])/cnt);
+                dest[index(i,j,ch)] = (uint8_t)((tmp[ch])/cnt);
             }
         }
 #ifndef __NVCC__
@@ -60,7 +79,7 @@ void box_blur(const uint8_t *restrict src, uint8_t *restrict dest, const size_t 
 }
 
 #ifdef __NVCC__
-const size_t NTHREADS = 512;
+const size_t NTHREADS = 1; // provare con pochissim
 extern "C" {
 void box_blur(const uint8_t * src, uint8_t * dest, const size_t width, const size_t height){
 	cuda_box_blur<<<(height+NTHREADS-1)/NTHREADS,NTHREADS>>>(src,  dest, width, height);
