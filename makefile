@@ -1,17 +1,22 @@
 NVIDIA_COMPILER := $(shell nvcc --version 2>/dev/null)
 CLIBS   	:=-lv4l2 -lv4lconvert -lavcodec -lavutil -lavformat -lswresample -lswscale
+DEFS		:=-DDEBUG -DCUDA2D
 
 ifdef NVIDIA_COMPILER
 $(info Using Nvidia Compiler - CUDA)
 CC 		:=nvcc
 CLIBS		:=-lnppc -lnppicc $(CLIBS)
-CFLAGS		:=-g -O3 -DDEBUG $(CLIBS)
+CFLAGS		:=-g -O3 $(DEFS) $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
+release: CFLAGS := -O3 $(CLIBS)
+release: CCOBJFLAGS	:= $(CFLAGS) -c
 else
 $(info Using GCC - No CUDA optimizations)
 CC 		:=gcc
-CFLAGS		:=-g -O2 -DDEBUG -fsanitize=address -fsanitize=undefined $(CLIBS)
+CFLAGS		:=-g -O2 -fsanitize=address -fsanitize=undefined $(DEFS) $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -x c -c
+release: CFLAGS := -O3 $(CLIBS)
+release: CCOBJFLAGS	:= $(CFLAGS) -x c -c
 endif
 
 DBGFLAGS 	:= -g
@@ -36,8 +41,6 @@ debug: $(TARGET)
 
 release: clean
 # release: CFLAGS := -DNDEBUG -O3 $(CLIBS)
-release: CFLAGS := -O3 $(CLIBS)
-release: CCOBJFLAGS	:= $(CFLAGS) -x c -c
 release: $(TARGET)
 
 
