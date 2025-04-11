@@ -20,7 +20,7 @@ static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
 static size_t              frame_count = 40;
 // static const size_t 	width = 1920, height = 1080;
-static const size_t 	width = 640, height = 480;
+static const size_t 	width = 1280, height = 720;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0}, libav_buffer = {NULL,0};
@@ -40,24 +40,12 @@ static buffer d_p = {NULL, 0};
 static void process_image(const void *p, size_t size)
 {
 	if(d_p.length < size){
+		cudaFree(d_p.start);
 		d_p.length = size;
 		cudaError_t cerr = cudaMalloc(&d_p.start, size);
 		assert(cerr == cudaSuccess);
 	}
-	if(conv_buffer.length < width*height*3){
-		cudaFree(conv_buffer.start);
-		cudaFree(dest_buffer.start);
-		free(libav_buffer.start);
-        conv_buffer.length = dest_buffer.length = width*height*3;
-		libav_buffer.length = width*height*2;
-		assert(cudaMalloc(&conv_buffer.start, conv_buffer.length) == cudaSuccess);
-		assert(cudaMalloc(&dest_buffer.start, dest_buffer.length) == cudaSuccess);
-		assert((libav_buffer.start = malloc(libav_buffer.length)) != NULL);
-	}
 	cudaMemcpy(d_p.start,p,size,cudaMemcpyHostToDevice);
-
-	assert(actual_fmt.fmt.pix.width == width);
-	assert(actual_fmt.fmt.pix.height == height);
 
 	const NppiSize nppSize = {.width = width, .height = height};
 	assert(NPP_SUCCESS == nppiYUV422ToRGB_8u_C2C3R(
@@ -65,12 +53,10 @@ static void process_image(const void *p, size_t size)
                 conv_buffer.start,width*3, nppSize));
 	
 	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
-    assert(NPP_SUCCESS == nppiRGBToYUV420_8u_P3R(
-                dest_buffer.start,width*3,
-                d_p.start,width*2, nppSize));
-	cudaMemcpy(libav_buffer.start, dest_buffer.start,libav_buffer.length,cudaMemcpyDeviceToHost);
+    	// assert(NPP_SUCCESS == nppiRGBToYUV420_8u_P3R( dest_buffer.start,width*3, d_p.start,width*2, nppSize));
+	cudaMemcpy(libav_buffer.start, dest_buffer.start,dest_buffer.length,cudaMemcpyDeviceToHost);
 
-    send_frame(libav_buffer.start, width, height, YUV420);
+	send_frame(libav_buffer.start, width, height, RGB24);
 }
 #else
 #ifndef __GNUC__
@@ -82,14 +68,6 @@ static void process_image(const void *p, size_t size)
 {
     assert(actual_fmt.fmt.pix.width == width);
     assert(actual_fmt.fmt.pix.height == height);
-    if(conv_buffer.length < width*height*3){
-        free(conv_buffer.start);
-        free(dest_buffer.start);
-		free(libav_buffer.start);
-        conv_buffer.length = dest_buffer.length = width*height*3;
-        assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
-        assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
-    }
 
     int ret = v4lconvert_convert(data,&actual_fmt, &wanted_fmt,
         (uint8_t *)p, 2*width*height,
@@ -145,9 +123,22 @@ static int read_frame(const int fd)
 
 static void mainloop(size_t count)
 {
-        int t0, t1;
+#ifdef __NVCC__
+	conv_buffer.length = dest_buffer.length = width*height*3;
+	libav_buffer.length = width*height*3;
+	assert(cudaMalloc(&conv_buffer.start, conv_buffer.length) == cudaSuccess);
+	assert(cudaMalloc(&dest_buffer.start, dest_buffer.length) == cudaSuccess);
+	assert((libav_buffer.start = malloc(libav_buffer.length)) != NULL);
+#else
+	conv_buffer.length = dest_buffer.length = width*height*3;
+	assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
+	assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
+#endif
+	struct timeval t0,t1,dt;
         do{
-                t0 = clock();
+#ifdef DEBUG
+		gettimeofday(&t0, NULL);
+#endif
                 for (;;) {
                         fd_set fds;
                         struct timeval tv;
@@ -176,11 +167,22 @@ static void mainloop(size_t count)
                                 break;
                         /* EAGAIN - continue select loop. */
                 }
-                t1 = clock();
+
 #ifdef DEBUG
-                fprintf(stderr,"Frametime %.3f ms -> %.2f\n",((float)t1-t0)*1000/CLOCKS_PER_SEC, CLOCKS_PER_SEC/((float)t1-t0));
+		gettimeofday(&t1, NULL);
+		timersub(&t1, &t0, &dt);
+                fprintf(stderr,"Frametime %.0f ms -> %.2f\n",(float)dt.tv_usec/1000.0, 1e6/dt.tv_usec);
 #endif
         }while (--count > 0);
+#ifdef __NVCC__
+	cudaFree(conv_buffer.start);
+	cudaFree(dest_buffer.start);
+	cudaFree(d_p.start);
+#else
+	free(conv_buffer.start);
+	free(dest_buffer.start);
+#endif
+	free(libav_buffer.start);
 }
 
 
@@ -193,7 +195,6 @@ static void usage(FILE *fp, int argc, char **argv)
                  "Options:\n"
                  "-d | --device name   Video device name [%s]\n"
                  "-h | --help          Print this message\n"
-                 "-o | --output        Outputs stream to stdout (default to file out)\n"
                  "-f | --format        Do not force format to  %li by %li\n"
                  "-c | --count         Number of frames to grab [%li], 0 for no limit\n"
                  "",
@@ -263,24 +264,21 @@ int main(int argc, char **argv)
     buffers = init_device(fd, force_format,&wanted_fmt,&actual_fmt);
     init_libav(width,height,4); // 4 is buffer size
     start_capturing(fd);
+#ifndef __NVCC__
     data = v4lconvert_create(fd);
+#endif
 
     mainloop(frame_count);
 
+#ifndef __NVCC__
     v4lconvert_destroy(data);
+#endif
+
     stop_capturing(fd);
     uninit_libav();
     uninit_device(buffers);
     close_device(fd); fd = -1;
 
-#ifdef __NVCC__
-    cudaFree(conv_buffer.start);
-    cudaFree(dest_buffer.start);
-#else
-    free(conv_buffer.start);
-    free(dest_buffer.start);
-#endif
-    free(libav_buffer.start);
 
 
     return 0;
