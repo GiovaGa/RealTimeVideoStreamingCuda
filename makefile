@@ -7,11 +7,15 @@ CC 		:=nvcc
 CLIBS		:=-lnppc -lnppicc $(CLIBS)
 CFLAGS		:=-g -O3 -DDEBUG $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -c
+release: CFLAGS := -O3 $(CLIBS)
+release: CCOBJFLAGS	:= $(CFLAGS) -c
 else
 $(info Using GCC - No CUDA optimizations)
 CC 		:=gcc
 CFLAGS		:=-g -O2 -DDEBUG -fsanitize=address -fsanitize=undefined $(CLIBS)
 CCOBJFLAGS 	:= $(CFLAGS) -x c -c
+release: CFLAGS := -O3 $(CLIBS)
+release: CCOBJFLAGS	:= $(CFLAGS) -x c -c
 endif
 
 DBGFLAGS 	:= -g
@@ -36,8 +40,6 @@ debug: $(TARGET)
 
 release: clean
 # release: CFLAGS := -DNDEBUG -O3 $(CLIBS)
-release: CFLAGS := -O3 $(CLIBS)
-release: CCOBJFLAGS	:= $(CFLAGS) -x c -c
 release: $(TARGET)
 
 
