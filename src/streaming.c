@@ -6,11 +6,6 @@
 #include <inttypes.h>
 #include <unistd.h>
 
-// networking
-// #include <sys/socket.h>
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-
 // libav*
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
@@ -37,7 +32,6 @@ static int64_t pts = 0;
 
 void init_libav(const int width, const int height, const int count)
 {
-    // outfile = fopen("out","wb");
 #ifdef DEBUG
     av_log_set_level(AV_LOG_VERBOSE);
 #else
@@ -152,26 +146,20 @@ static int stream_frame(AVFrame* frame){
 void uninit_libav()
 {
     stream_frame(NULL);
-    // fclose(outfile);
-
 
     if (muxer && !(muxer->oformat->flags & AVFMT_NOFILE))
         avio_closep(&muxer->pb);
     avformat_free_context(muxer);
     // avio_format_context_unref(video_track);
-    // av_packet_free(&encoded_packet); 
     if(encoded_packet != NULL) av_packet_unref(encoded_packet); 
-    // av_packet_free(&encoded_frame); 
     if(encoded_frame != NULL) av_packet_unref(encoded_frame); 
-
 
     avcodec_free_context(&encoder);
     sws_freeContext(sws_ctx);
-    // av_frame_free(&yuv_frame);
     av_frame_unref(yuv_frame);
-    // av_frame_free(&frame);
-    av_frame_unref(frame);
-    // close(sockfd);
+#ifndef __NVCC__
+    if(frame != NULL) av_frame_unref(frame);
+#endif
 }
 
 int send_frame(void *restrict data, const int source_width, const int source_height, const enum format_enum fmt)
@@ -181,8 +169,6 @@ int send_frame(void *restrict data, const int source_width, const int source_hei
     switch(fmt){
         case RGB24:
             memcpy(frame->data[0],data,source_width*source_height*3);
-            ret = av_frame_make_writable(frame);
-            if (ret < 0) exit(1);
             // Convert the RGB frame to YUV420p
             sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, source_height, yuv_frame->data, yuv_frame->linesize);
 
