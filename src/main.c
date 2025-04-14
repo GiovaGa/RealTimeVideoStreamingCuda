@@ -1,10 +1,15 @@
+#ifdef DEBUG
 #include <assert.h>
+#include <time.h>
+#else
+#define assert(x) x
+#endif
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
 #include <getopt.h>             /* getopt_long() */
 
@@ -31,6 +36,9 @@ static struct v4l2_format actual_fmt, wanted_fmt = {
     .fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24,
     .fmt.pix.field       = V4L2_FIELD_INTERLACED
 };
+#ifdef DEBUG
+static struct timeval t0,t1,t2,t3,dt;
+#endif
 
 #ifdef __NVCC__
 #include <nppdefs.h>
@@ -52,7 +60,13 @@ static void process_image(const void *p, size_t size)
                 d_p.start,width*2,
                 conv_buffer.start,width*3, nppSize));
 	
+#ifdef DEBUG
+	gettimeofday(&t2, NULL);
+#endif
 	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
+#ifdef DEBUG
+	gettimeofday(&t3, NULL);
+#endif
     	// assert(NPP_SUCCESS == nppiRGBToYUV420_8u_P3R( dest_buffer.start,width*3, d_p.start,width*2, nppSize));
 	cudaMemcpy(libav_buffer.start, dest_buffer.start,dest_buffer.length,cudaMemcpyDeviceToHost);
 
@@ -78,8 +92,13 @@ static void process_image(const void *p, size_t size)
     }else{
         // conv_buffer.length = r;  ?? 
     }
-
+#ifdef DEBUG
+	gettimeofday(&t2, NULL);
+#endif
     box_blur((uint8_t *)conv_buffer.start, (uint8_t *) dest_buffer.start, width, height);
+#ifdef DEBUG
+	gettimeofday(&t3, NULL);
+#endif
 
     if(ret == -1){
         fprintf(stderr,"V4lconvert: %s\n",v4lconvert_get_error_message(data));
@@ -134,7 +153,6 @@ static void mainloop(size_t count)
 	assert((conv_buffer.start = malloc(conv_buffer.length)) != NULL);
 	assert((dest_buffer.start = malloc(dest_buffer.length)) != NULL);
 #endif
-	struct timeval t0,t1,dt;
         do{
 #ifdef DEBUG
 		gettimeofday(&t0, NULL);
@@ -171,7 +189,9 @@ static void mainloop(size_t count)
 #ifdef DEBUG
 		gettimeofday(&t1, NULL);
 		timersub(&t1, &t0, &dt);
-                fprintf(stderr,"Frametime %.0f ms -> %.2f\n",(float)dt.tv_usec/1000.0, 1e6/dt.tv_usec);
+                fprintf(stderr,"Frametime: %.0f ms -> %.2f\t|\t",(float)dt.tv_usec/1000.0, 1e6/dt.tv_usec);
+		timersub(&t3, &t2, &dt);
+                fprintf(stderr,"Blur time: %ld us\n",dt.tv_usec);
 #endif
         }while (--count > 0);
 #ifdef __NVCC__
