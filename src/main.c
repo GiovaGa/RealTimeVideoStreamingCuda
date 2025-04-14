@@ -25,7 +25,7 @@ static int              out_std = 0; // output images to stdout, 0 to file
 static int              force_format = 1;
 static size_t              frame_count = 40;
 // static const size_t 	width = 1920, height = 1080;
-static const size_t 	width = 1280, height = 720;
+static const size_t     width = 640, height = 480;
 struct v4lconvert_data* data;
 static buffer           *buffers = NULL;
 static buffer           conv_buffer = {NULL,0}, dest_buffer = {NULL,0}, libav_buffer = {NULL,0};
@@ -47,6 +47,9 @@ static buffer d_p = {NULL, 0};
 
 static void process_image(const void *p, size_t size)
 {
+#ifdef DEBUG
+    gettimeofday(&t2, NULL);
+#endif
 	if(d_p.length < size){
 		cudaFree(d_p.start);
 		d_p.length = size;
@@ -60,16 +63,13 @@ static void process_image(const void *p, size_t size)
                 d_p.start,width*2,
                 conv_buffer.start,width*3, nppSize));
 	
-#ifdef DEBUG
-	gettimeofday(&t2, NULL);
-#endif
 	box_blur((uint8_t*)conv_buffer.start, (uint8_t*) dest_buffer.start, width, height);
-#ifdef DEBUG
-	gettimeofday(&t3, NULL);
-#endif
     	// assert(NPP_SUCCESS == nppiRGBToYUV420_8u_P3R( dest_buffer.start,width*3, d_p.start,width*2, nppSize));
 	cudaMemcpy(libav_buffer.start, dest_buffer.start,dest_buffer.length,cudaMemcpyDeviceToHost);
 
+#ifdef DEBUG
+    gettimeofday(&t3, NULL);
+#endif
 	send_frame(libav_buffer.start, width, height, RGB24);
 }
 #else
@@ -80,6 +80,9 @@ static void process_image(const void *p, size_t size)
 
 static void process_image(const void *p, size_t size)
 {
+#ifdef DEBUG
+    gettimeofday(&t2, NULL);
+#endif
     assert(actual_fmt.fmt.pix.width == width);
     assert(actual_fmt.fmt.pix.height == height);
 
@@ -92,18 +95,15 @@ static void process_image(const void *p, size_t size)
     }else{
         // conv_buffer.length = r;  ?? 
     }
-#ifdef DEBUG
-	gettimeofday(&t2, NULL);
-#endif
     box_blur((uint8_t *)conv_buffer.start, (uint8_t *) dest_buffer.start, width, height);
-#ifdef DEBUG
-	gettimeofday(&t3, NULL);
-#endif
-
     if(ret == -1){
         fprintf(stderr,"V4lconvert: %s\n",v4lconvert_get_error_message(data));
         exit(-1);
     }
+#ifdef DEBUG
+    gettimeofday(&t3, NULL);
+#endif
+
     send_frame(dest_buffer.start, width, height, RGB24);
 }
 #endif
@@ -190,8 +190,12 @@ static void mainloop(size_t count)
 		gettimeofday(&t1, NULL);
 		timersub(&t1, &t0, &dt);
                 fprintf(stderr,"Frametime: %.0f ms -> %.2f\t|\t",(float)dt.tv_usec/1000.0, 1e6/dt.tv_usec);
+        timersub(&t2, &t0, &dt);
+        fprintf(stderr,"Capture time: %ld ms\t",dt.tv_usec/1000);
 		timersub(&t3, &t2, &dt);
-                fprintf(stderr,"Blur time: %ld us\n",dt.tv_usec);
+        fprintf(stderr,"Blur time: %ld us\t",dt.tv_usec);
+        timersub(&t1, &t3, &dt);
+        fprintf(stderr,"libav time: %ld ms\n",dt.tv_usec/1000);
 #endif
         }while (--count > 0);
 #ifdef __NVCC__

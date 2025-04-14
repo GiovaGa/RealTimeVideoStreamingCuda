@@ -105,7 +105,7 @@ void box_blur(const uint8_t * src, uint8_t * dest, const size_t width, const siz
     const dim3 numBlocks(height / threadsPerBlock.x, width / threadsPerBlock.y);
     cuda2d_box_blur<<<numBlocks,threadsPerBlock>>>(src,  dest, width, height);
 #else
-    const size_t NTHREADS = 1; // provare con pochissime
+    const size_t NTHREADS = 2048;
     cuda_box_blur<<<(height+NTHREADS-1)/NTHREADS,NTHREADS>>>(src,  dest, width, height);
 #endif
 }
